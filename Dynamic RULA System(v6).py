@@ -11,6 +11,7 @@ import os  # 用於檢查檔案路徑是否存在
 from numpy.linalg import norm # 導入 NumPy 的向量範數計算功能，用於計算向量長度
 import sys 
 import traceback 
+import math 
 # ==== 統一輸出命名（影片/CSV 同名）====
 import os, csv, time  # 你已經有 import os/csv/time，保留即可；這裡只是提醒
 RUN_TS = time.strftime("%Y%m%d-%H%M%S")
@@ -26,7 +27,7 @@ video_writer = None
 csv_fh = None
 csv_writer = None
 recording = False
-path_mp4 = "C:\Users\azcon\OneDrive\Escritorio\SEXTO SEMESTRE\CAPSTONE\CAPSTONE-PROJECT/1002_6-5.mp4"
+path_mp4 = r"C:\Users\azcon\OneDrive\Escritorio\SEXTO SEMESTRE\CAPSTONE\CAPSTONE-PROJECT/1002_6-5.mp4"
 # 設定三支鏡頭的 index
 LEFT_SIDE_CAMERA_INDEX = 1  # Camera for LEFT side view
 RIGHT_SIDE_CAMERA_INDEX = 2 # Camera for RIGHT side view 
@@ -35,7 +36,7 @@ FRONT_CAMERA_INDEX = 0      # Camera for Front view
 # === 新增：錄影相關 ===
 VIDEO_FPS = 15.0                     # 想要的輸出 FPS（可依需要改 30.0）
 VIDEO_CODEC = 'mp4v'                 # 'mp4v' -> .mp4, 或改 'XVID' -> .avi
-VIDEO_OUT_PATH = time.strftime(path_mp4)
+# VIDEO_OUT_PATH = time.strftime(path_mp4)
 video_writer = None                  # 延後初始化（拿到 combined1 尺寸後）
 
 # 導入Mediapipe Hands模組
@@ -189,19 +190,94 @@ def get_rula_action_level(final_score):
 # ==============================================================================
 #RULA表格初始化（A/B/C）
 # RULA 表 A：手臂和手腕分析 (Arm & Wrist Analysis)
+
 table_a_data = {
-    'Upper Arm': [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6],
-    'Lower Arm': [1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3],
-    'WS1_T1':    [1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 6, 7, 8, 9], # Wrist Score 1, Wrist Twist 1
-    'WS1_T2':    [2, 2, 3, 3, 3, 4, 3, 4, 4, 4, 4, 4, 5, 6, 6, 7, 8, 9], # Wrist Score 1, Wrist Twist 2
-    'WS2_T1':    [2, 2, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 5, 6, 6, 7, 8, 9], # Wrist Score 2, Wrist Twist 1
-    'WS2_T2':    [2, 2, 3, 3, 3, 4, 4, 4, 4, 4, 4, 5, 5, 6, 7, 7, 8, 9], # Wrist Score 2, Wrist Twist 2
-    'WS3_T1':    [2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 5, 5, 6, 7, 7, 8, 9], # Wrist Score 3, Wrist Twist 1
-    'WS3_T2':    [3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5, 5, 6, 7, 7, 8, 9, 9], # Wrist Score 3, Wrist Twist 2
-    'WS4_T1':    [3, 3, 4, 4, 4, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7, 8, 9, 9], # Wrist Score 4, Wrist Twist 1
-    'WS4_T2':    [3, 3, 4, 4, 4, 5, 5, 5, 5, 5, 5, 6, 7, 7, 8, 9, 9, 9]  # Wrist Score 4, Wrist Twist 2
+    "Trunk": [1, 2, 3, 4, 5],
+    "N1_L1": [1, 2, 2, 3, 4],
+    "N1_L2": [2, 3, 4, 5, 6],
+    "N1_L3": [3, 4, 5, 6, 7],
+    "N1_L4": [4, 5, 6, 7, 8],
+    "N2_L1": [1, 3, 4, 5, 6],
+    "N2_L2": [2, 4, 5, 6, 7],
+    "N2_L3": [3, 5, 6, 7, 8],
+    "N2_L4": [4, 6, 7, 8, 9],
+    "N3_L1": [3, 4, 5, 6, 7],
+    "N3_L2": [3, 5, 6, 7, 8],
+    "N3_L3": [5, 6, 7, 8, 9],
+    "N3_L4": [6, 7, 8, 9, 9],
 }
-table_a = pd.DataFrame(table_a_data)
+reba_table_a = pd.DataFrame(table_a_data)
+
+def validate_reba_table_a_schema(df: pd.DataFrame) -> None:
+    """Raise Value Error if REBA Table A schema is invalid."""
+    required_cols= {"Trunk"}
+    for n in range(1,4):
+        for l in range(1,5):
+            required_cols.add(f"N{n}_L{l}")
+    
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"Reba Table A missing columns: {sorted(missing)}")
+    
+    if df.empty:
+        raise ValueError("Reba Table A is empty")
+    
+def _to_valid_int_score(name: str, value, lo:int, hi: int) -> int:
+    """ Convert input to bounded int score with strict validation """
+    if value is None:
+        raise ValueError(f"{name} is None")
+
+    try:
+        x = float(value)
+    except (TypeError, ValueError) as e:
+        raise TypeError (f"{name} must be numeric, got {type(value).__name__}") from e
+    
+    if not math.isfinite(x):
+        raise ValueError(f"{name} must be finite, got{x}")
+    
+    return int (max(lo,min(hi,round(x))))
+
+def get_reba_table_a_score(neck_score, trunk_score,legs_score, table_df = None):
+    """
+    Robust REBA Table A lookup
+    Inputs: 
+            neck_score: expected to be 1...3
+            trunk_score: expected to be 1...5
+            legs_score: expected to be 1...4
+            
+    Ouput:
+            int score or None on Failure
+    """
+
+    df = reba_table_a if table_df is None else table_df
+    
+    try:
+        validate_reba_table_a_schema(df)
+
+        neck = _to_valid_int_score("neck_score", neck_score,1,3)
+        trunk= _to_valid_int_score("trunk_score", trunk_score, 1, 5)
+        legs = _to_valid_int_score("legs_score", legs_score,1,4)
+    
+        col = f"N{neck}_L{legs}"
+        row = df.loc[df["Trunk"]== trunk]
+
+        if row.empty:
+            raise ValueError(f"No row found for TRUNK = {trunk}")
+        
+        value = row.iloc[0][col]
+        
+        if pd.isna(value):
+            raise ValueError(f"Cell value is NaN for Trunk={trunk}, Col={col}")
+
+        value_int = int(value)
+        return value_int
+
+    except (TypeError, ValueError, KeyError, IndexError) as e:
+        print(f"Err REBA Table A: {e}")
+        return None
+    except Exception as e:
+        print(f"Err REBA Table A (unexpected): {e}")
+        return None
 
 # RULA 表 B：頸部、軀幹和腿部分析 (Neck, Trunk and Leg Analysis)
 table_b_data = {
@@ -227,7 +303,7 @@ table_c_data = {
 }
 table_c = pd.DataFrame(table_c_data)
 
-# 查表 A 的函式
+# i need to delete get_table_a_score and replace it by the the new funtion for the REBA METHOD
 def get_table_a_score(ua_s, la_s, wr_s, wr_t=1):
     try:
         # 將輸入分數限制在表格的有效範圍內
@@ -247,6 +323,7 @@ def get_table_a_score(ua_s, la_s, wr_s, wr_t=1):
     except Exception as e: 
         print(f"Err A: {e}"); 
         return None
+
 # 查表 B 的函式
 def get_table_b_score(nk_s, tr_s, lg_s=1):
     try:
