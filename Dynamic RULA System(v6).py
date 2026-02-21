@@ -14,7 +14,7 @@ import traceback
 # ==== 統一輸出命名（影片/CSV 同名）====
 import os, csv, time  # 你已經有 import os/csv/time，保留即可；這裡只是提醒
 RUN_TS = time.strftime("%Y%m%d-%H%M%S")
-OUTPUT_DIR = r"C:/Users/COINLAB/Desktop/京駿學長論文交接/資料輸出"
+OUTPUT_DIR = r"C:\Users\azcon\OneDrive\Escritorio\SEXTO SEMESTRE\CAPSTONE\CAPSTONE-PROJECT"
 BASE_NAME = f"{RUN_TS}_1-1"  # 保留你「1-1」的命名習慣
 
 VIDEO_FPS = 15.0
@@ -26,7 +26,7 @@ video_writer = None
 csv_fh = None
 csv_writer = None
 recording = False
-path_mp4 = "C:/Users/COINLAB/Desktop/京駿學長論文交接/資料輸出/1002_6-5.mp4"
+path_mp4 = "C:\Users\azcon\OneDrive\Escritorio\SEXTO SEMESTRE\CAPSTONE\CAPSTONE-PROJECT/1002_6-5.mp4"
 # 設定三支鏡頭的 index
 LEFT_SIDE_CAMERA_INDEX = 1  # Camera for LEFT side view
 RIGHT_SIDE_CAMERA_INDEX = 2 # Camera for RIGHT side view 
@@ -44,7 +44,7 @@ hands_left_side = mp_hands.Hands(static_image_mode=False, max_num_hands=1, model
 hands_right_side = mp_hands.Hands(static_image_mode=False, max_num_hands=1, model_complexity=1, min_detection_confidence=0.5)
 hands_front = mp_hands.Hands(static_image_mode=False, max_num_hands=2, model_complexity=1, min_detection_confidence=0.5)
 
-# 導入Mediapipe Pose模組ㄏ
+# 導入Mediapipe Pose模組
 mp_pose = mp.solutions.pose
 # Initialize separate Pose instances for potentially different views/tracking
 pose_left_side = mp_pose.Pose(min_detection_confidence=0.4, min_tracking_confidence=0.4)#(最低偵測信賴度)、(最低追蹤信賴度)
@@ -53,17 +53,70 @@ pose_front = mp_pose.Pose(min_detection_confidence=0.4, min_tracking_confidence=
 
 #設定關鍵判斷角度的閾值（手臂外展、脖子與軀幹旋轉）
 # !! IMPORTANT: Adjust Abduction Threshold if using Shoulder Angle !!
-ARM_ABDUCTION_THRESHOLD = 25 # 手臂外展的角度閾值
-NECK_TWIST_Z_THRESHOLD = 0.05  # 脖子 Z 軸旋轉差距閾值（由左右耳 landmark z 差決定，大於此閾值則判定為旋轉）
-TRUNK_TWIST_Z_THRESHOLD = 0.08 # 軀幹 Z 軸旋轉差距閾值（由左右肩 landmark z 差決定，大於此閾值則判定為旋轉）
+# ARM_ABDUCTION_THRESHOLD = 25 # 手臂外展的角度閾值
+# NECK_TWIST_Z_THRESHOLD = 0.05  # 脖子 Z 軸旋轉差距閾值（由左右耳 landmark z 差決定，大於此閾值則判定為旋轉）
+# TRUNK_TWIST_Z_THRESHOLD = 0.08 # 軀幹 Z 軸旋轉差距閾值（由左右肩 landmark z 差決定，大於此閾值則判定為旋轉）
 
-# RULA分數之動作風險等級對應
-ACTION_LEVEL_DESCRIPTIONS = {
-    (1, 2): "Acceptable posture.",
-    (3, 4): "Further investigation, change may be needed.",
-    (5, 6): "Further investigation, change soon.",
-    (7, float('inf')): "Investigate and implement changes ." # Handle scores >= 7
+""" Degree based posture thresholds: upper arm abduction angle,
+neck flexion/extension angle and trunk flexion/extension angle;
+values above each threshold are treated as non-neutral and may increase the ergonomic
+risk score"""
+
+# ADDED CODE: GROUP A (Trunk, Neck, Legs)
+TRUNK_FLEXION_BINS = (5,20,60)
+TRUNK_EXTENSION_THRESHOLD = 5
+TRUNK_SIDE_BEND_THRESHOLD = 10
+TRUNK_TWIST_Z_THRESHOLD = 0.08
+
+NECK_FLEXION_THRESHOLD = 20
+NECK_EXTENSION_THRESHOLD = 5
+NECK_SIDE_BEND_THRESHOLD = 10
+NECK_TWIST_Z_THRESHOLD = 0.05
+
+KNEE_FLEXION_THRESHOLD_1 = 30
+KNEE_FLEXION_THRESHOLD_2 = 60
+LEGS_ASYMMETRY_THRESHOLD = 0.10
+
+# ADDED CODE: GROUP B (Upper Arm, Lower Arm, Wrist)
+UPPER_ARM_FLEXION_BINS = (20,45,90)
+ARM_ABDUCTION_THRESHOLD = 25
+SHOULDER_RAISE_THRESHOLD = 15
+
+LOWER_ARM_NEUTRAL_MIN = 60
+LOWER_ARM_NEUTRAL_MAX = 100
+
+WRIST_FLEXION_THRESHOLD = 15
+WRIST_DEVIATION_THRESHOLD = 10
+WRIST_TWIST_THRESHOLD= 10
+
+# ADDED CODE: LOAD AND FORCE
+LOAD_WEIGHT_THRESHOLDS_KG = (5,10)
+FORCE_SUDDEN_BONUS = 1
+
+# ADDED CODE: COUPLING
+COUPLING_SCORE = {
+    "good": 0,
+    "fair": 1,
+    "poor": 2,
+    "unacceptable": 3
 }
+"""add one if the posture is held for more than one minute, 
+    repeated or unstable"""
+STATIC_HOLD_SECONDS = 60 
+REPETITION_PER_MIN_THRESHOLD = 4
+UNSTABLE_POSTURE_BONUS= 1
+
+
+# ADDED CODE: REBA ACTION LEVEL 
+ACTION_LEVEL_DESCRIPTIONS = {
+    (1, 1): "Negligible risk, no action required.",
+    (2, 3): "Low risk; change may be needed.",
+    (4, 7): "Medium risk; further investigation, change soon.",
+    (8, 10): "High risk; investigate and implement change.",
+    (11, float('inf')): "Very high risk; implement change now." 
+}
+
+
 # ==============================================================================
 # 區塊 2：輔助函式 (角度計算、繪圖、查表)
 # ==============================================================================
@@ -854,7 +907,7 @@ while True: # 進入主迴圈，持續處理影像
             dominant_side = "Right" if score_r_is_num else "Left (R Invalid)" # Indicate based on validity
 #        final_action_level = get_rula_action_level(final_rula_score)
 #7.分數儲存
-        csv_path = "C:/Users/COINLAB/Desktop/京駿學長論文交接/資料輸出/csv1002_1-3.csv"  # 可調整路徑
+        csv_path = "C:\Users\azcon\OneDrive\Escritorio\SEXTO SEMESTRE\CAPSTONE\CAPSTONE-PROJECT/csv1002_1-3.csv"  # 可調整路徑
         # 準備寫入的資料
        #7.分數儲存（與影片同名的 CSV）
         row_data = {
