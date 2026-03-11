@@ -1,0 +1,11 @@
+# MediaPipe model files (auto-downloaded on first run)
+*.task
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Output files
+*.mp4
+*.csv

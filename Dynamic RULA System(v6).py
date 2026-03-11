@@ -9,6 +9,7 @@ from numpy.linalg import norm
 import sys
 import traceback
 import math
+import urllib.request
 
 # ==== Output Paths (relative to script location) ====
 RUN_TS     = time.strftime("%Y%m%d-%H%M%S")
@@ -57,20 +58,79 @@ REBA_LOAD_SCORE     = 0   # 0 (<5 kg), 1 (5–10 kg), 2 (>10 kg), +1 if shock/ra
 REBA_COUPLING_SCORE = 0   # 0 good grip, 1 fair, 2 poor, 3 unacceptable
 REBA_ACTIVITY_SCORE = 0   # 0–3: +1 static hold, +1 repeated >4/min, +1 rapid/unstable
 
-# ==== MediaPipe Hands ====
-mp_hands         = mp.solutions.hands
-hands_left_side  = mp_hands.Hands(static_image_mode=False, max_num_hands=1,
-                                   model_complexity=1, min_detection_confidence=0.5)
-hands_right_side = mp_hands.Hands(static_image_mode=False, max_num_hands=1,
-                                   model_complexity=1, min_detection_confidence=0.5)
-hands_front      = mp_hands.Hands(static_image_mode=False, max_num_hands=2,
-                                   model_complexity=1, min_detection_confidence=0.5)
+# ==== MediaPipe Tasks API ====
+BaseOptions           = mp.tasks.BaseOptions
+PoseLandmarker        = mp.tasks.vision.PoseLandmarker
+PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
+HandLandmarker        = mp.tasks.vision.HandLandmarker
+HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
+VisionRunningMode     = mp.tasks.vision.RunningMode
 
-# ==== MediaPipe Pose ====
-mp_pose         = mp.solutions.pose
-pose_left_side  = mp_pose.Pose(min_detection_confidence=0.4, min_tracking_confidence=0.4)
-pose_right_side = mp_pose.Pose(min_detection_confidence=0.4, min_tracking_confidence=0.4)
-pose_front      = mp_pose.Pose(min_detection_confidence=0.4, min_tracking_confidence=0.4)
+# Pose landmark indices (replaces mp_pose.PoseLandmark)
+POSE_LEFT_EAR       = 7
+POSE_RIGHT_EAR      = 8
+POSE_LEFT_SHOULDER  = 11
+POSE_RIGHT_SHOULDER = 12
+POSE_LEFT_ELBOW     = 13
+POSE_RIGHT_ELBOW    = 14
+POSE_LEFT_WRIST     = 15
+POSE_RIGHT_WRIST    = 16
+POSE_LEFT_HIP       = 23
+POSE_RIGHT_HIP      = 24
+POSE_LEFT_KNEE      = 25
+POSE_RIGHT_KNEE     = 26
+POSE_LEFT_ANKLE     = 27
+POSE_RIGHT_ANKLE    = 28
+
+# Hand landmark index (replaces mp_hands.HandLandmark)
+HAND_MIDDLE_FINGER_PIP = 10
+
+# ==== Model files (auto-download if missing) ====
+POSE_MODEL_PATH = os.path.join(OUTPUT_DIR, 'pose_landmarker_full.task')
+HAND_MODEL_PATH = os.path.join(OUTPUT_DIR, 'hand_landmarker.task')
+_POSE_URL = ('https://storage.googleapis.com/mediapipe-models/'
+             'pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task')
+_HAND_URL = ('https://storage.googleapis.com/mediapipe-models/'
+             'hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task')
+for _path, _url, _name in [(POSE_MODEL_PATH, _POSE_URL, 'Pose'),
+                            (HAND_MODEL_PATH, _HAND_URL, 'Hand')]:
+    if not os.path.exists(_path):
+        print(f"Downloading {_name} model → {_path} ...")
+        urllib.request.urlretrieve(_url, _path)
+        print(f"{_name} model ready.")
+
+# ==== Landmarker instances ====
+_pose_opts = PoseLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path=POSE_MODEL_PATH),
+    running_mode=VisionRunningMode.VIDEO,
+    min_pose_detection_confidence=0.4,
+    min_pose_presence_confidence=0.4,
+    min_tracking_confidence=0.4)
+_hand_opts_1 = HandLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path=HAND_MODEL_PATH),
+    running_mode=VisionRunningMode.VIDEO,
+    num_hands=1,
+    min_hand_detection_confidence=0.5,
+    min_hand_presence_confidence=0.5,
+    min_tracking_confidence=0.5)
+_hand_opts_2 = HandLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path=HAND_MODEL_PATH),
+    running_mode=VisionRunningMode.VIDEO,
+    num_hands=2,
+    min_hand_detection_confidence=0.5,
+    min_hand_presence_confidence=0.5,
+    min_tracking_confidence=0.5)
+
+pose_left_side   = PoseLandmarker.create_from_options(_pose_opts)
+pose_right_side  = PoseLandmarker.create_from_options(_pose_opts)
+pose_front       = PoseLandmarker.create_from_options(_pose_opts)
+hands_left_side  = HandLandmarker.create_from_options(_hand_opts_1)
+hands_right_side = HandLandmarker.create_from_options(_hand_opts_1)
+hands_front      = HandLandmarker.create_from_options(_hand_opts_2)
+
+# Per-instance monotonic timestamp counters (Tasks API requires strictly increasing values)
+_ts_pose_l = _ts_pose_r = _ts_pose_f = 0
+_ts_hand_l = _ts_hand_r = _ts_hand_f = 0
 
 
 # ============================================================
@@ -418,28 +478,27 @@ while True:
         # LEFT SIDE camera — Group A angles (trunk/neck) + Group B (arm)
         # ================================================================
         frame_left_rgb = cv2.cvtColor(frame_left, cv2.COLOR_BGR2RGB)
-        frame_left_rgb.flags.writeable = False
-        results_ls = pose_left_side.process(frame_left_rgb)
-        results_lh = hands_left_side.process(frame_left_rgb)
-        frame_left_rgb.flags.writeable = True
+        mp_img_l = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_left_rgb)
+        _ts_pose_l += 1; results_ls = pose_left_side.detect_for_video(mp_img_l, _ts_pose_l)
+        _ts_hand_l += 1; results_lh = hands_left_side.detect_for_video(mp_img_l, _ts_hand_l)
         frame_left_out = frame_left.copy()
 
         hand_lm_l = None
-        if results_lh.multi_hand_landmarks and results_lh.multi_handedness:
-            for lm, handed in zip(results_lh.multi_hand_landmarks, results_lh.multi_handedness):
-                if handed.classification[0].label == 'Left':
-                    hand_lm_l = lm; break
-        if hand_lm_l is None and results_lh.multi_hand_landmarks:
-            hand_lm_l = results_lh.multi_hand_landmarks[0]
+        if results_lh.hand_landmarks and results_lh.handedness:
+            for lm_list, handed_list in zip(results_lh.hand_landmarks, results_lh.handedness):
+                if handed_list[0].category_name == 'Left':
+                    hand_lm_l = lm_list; break
+        if hand_lm_l is None and results_lh.hand_landmarks:
+            hand_lm_l = results_lh.hand_landmarks[0]
 
         if results_ls.pose_landmarks:
-            landmarks_ls = results_ls.pose_landmarks.landmark
+            landmarks_ls = results_ls.pose_landmarks[0]
             try:
-                l_sh_lm  = landmarks_ls[mp_pose.PoseLandmark.LEFT_SHOULDER]
-                l_el_lm  = landmarks_ls[mp_pose.PoseLandmark.LEFT_ELBOW]
-                l_wr_lm  = landmarks_ls[mp_pose.PoseLandmark.LEFT_WRIST]
-                l_hip_lm = landmarks_ls[mp_pose.PoseLandmark.LEFT_HIP]
-                l_ear_lm = landmarks_ls[mp_pose.PoseLandmark.LEFT_EAR]
+                l_sh_lm  = landmarks_ls[POSE_LEFT_SHOULDER]
+                l_el_lm  = landmarks_ls[POSE_LEFT_ELBOW]
+                l_wr_lm  = landmarks_ls[POSE_LEFT_WRIST]
+                l_hip_lm = landmarks_ls[POSE_LEFT_HIP]
+                l_ear_lm = landmarks_ls[POSE_LEFT_EAR]
 
                 required_lms = [l_sh_lm, l_el_lm, l_wr_lm, l_hip_lm, l_ear_lm]
                 if all(lm.visibility > 0.6 for lm in required_lms):
@@ -459,10 +518,10 @@ while True:
                     if hand_lm_l is not None:
                         angle_l = compute_wrist_angle_2dxy(
                             l_el_lm, l_wr_lm,
-                            hand_lm_l.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_PIP],
+                            hand_lm_l[HAND_MIDDLE_FINGER_PIP],
                             w_left, h_left)
                         left_results["angles"]["wrist"] = angle_l
-                        mid_lm = hand_lm_l.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_PIP]
+                        mid_lm = hand_lm_l[HAND_MIDDLE_FINGER_PIP]
                         mid_pt = (int(mid_lm.x * w_left), int(mid_lm.y * h_left))
                         cv2.circle(frame_left_out, mid_pt, 4, (0, 255, 0), -1)
                         cv2.line(frame_left_out, mid_pt, l_wr_pt, (255, 0, 0), 1)
@@ -484,28 +543,27 @@ while True:
         # RIGHT SIDE camera
         # ================================================================
         frame_right_rgb = cv2.cvtColor(frame_right, cv2.COLOR_BGR2RGB)
-        frame_right_rgb.flags.writeable = False
-        results_rs = pose_right_side.process(frame_right_rgb)
-        results_rh = hands_right_side.process(frame_right_rgb)
-        frame_right_rgb.flags.writeable = True
+        mp_img_r = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_right_rgb)
+        _ts_pose_r += 1; results_rs = pose_right_side.detect_for_video(mp_img_r, _ts_pose_r)
+        _ts_hand_r += 1; results_rh = hands_right_side.detect_for_video(mp_img_r, _ts_hand_r)
         frame_right_out = frame_right.copy()
 
         hand_lm_r = None
-        if results_rh.multi_hand_landmarks and results_rh.multi_handedness:
-            for lm, handed in zip(results_rh.multi_hand_landmarks, results_rh.multi_handedness):
-                if handed.classification[0].label == 'Right':
-                    hand_lm_r = lm; break
-        if hand_lm_r is None and results_rh.multi_hand_landmarks:
-            hand_lm_r = results_rh.multi_hand_landmarks[0]
+        if results_rh.hand_landmarks and results_rh.handedness:
+            for lm_list, handed_list in zip(results_rh.hand_landmarks, results_rh.handedness):
+                if handed_list[0].category_name == 'Right':
+                    hand_lm_r = lm_list; break
+        if hand_lm_r is None and results_rh.hand_landmarks:
+            hand_lm_r = results_rh.hand_landmarks[0]
 
         if results_rs.pose_landmarks:
-            landmarks_rs = results_rs.pose_landmarks.landmark
+            landmarks_rs = results_rs.pose_landmarks[0]
             try:
-                r_sh_lm  = landmarks_rs[mp_pose.PoseLandmark.RIGHT_SHOULDER]
-                r_el_lm  = landmarks_rs[mp_pose.PoseLandmark.RIGHT_ELBOW]
-                r_wr_lm  = landmarks_rs[mp_pose.PoseLandmark.RIGHT_WRIST]
-                r_hip_lm = landmarks_rs[mp_pose.PoseLandmark.RIGHT_HIP]
-                r_ear_lm = landmarks_rs[mp_pose.PoseLandmark.RIGHT_EAR]
+                r_sh_lm  = landmarks_rs[POSE_RIGHT_SHOULDER]
+                r_el_lm  = landmarks_rs[POSE_RIGHT_ELBOW]
+                r_wr_lm  = landmarks_rs[POSE_RIGHT_WRIST]
+                r_hip_lm = landmarks_rs[POSE_RIGHT_HIP]
+                r_ear_lm = landmarks_rs[POSE_RIGHT_EAR]
 
                 required_rms = [r_sh_lm, r_el_lm, r_wr_lm, r_hip_lm, r_ear_lm]
                 if all(lm.visibility > 0.6 for lm in required_rms):
@@ -525,10 +583,10 @@ while True:
                     if hand_lm_r is not None:
                         angle_r = compute_wrist_angle_2dxy(
                             r_el_lm, r_wr_lm,
-                            hand_lm_r.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_PIP],
+                            hand_lm_r[HAND_MIDDLE_FINGER_PIP],
                             w_right, h_right)
                         right_results["angles"]["wrist"] = angle_r
-                        mid_lm_r = hand_lm_r.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_PIP]
+                        mid_lm_r = hand_lm_r[HAND_MIDDLE_FINGER_PIP]
                         mid_pt_r = (int(mid_lm_r.x * w_right), int(mid_lm_r.y * h_right))
                         cv2.circle(frame_right_out, mid_pt_r, 4, (0, 255, 0), -1)
                         cv2.line(frame_right_out, mid_pt_r, r_wr_pt, (255, 0, 0), 1)
@@ -550,28 +608,27 @@ while True:
         # FRONT camera — adjustment flags + knee flexion
         # ================================================================
         frame_front_rgb = cv2.cvtColor(frame_front, cv2.COLOR_BGR2RGB)
-        frame_front_rgb.flags.writeable = False
-        results_front = pose_front.process(frame_front_rgb)
-        frame_front_rgb.flags.writeable = True
+        mp_img_f = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_front_rgb)
+        _ts_pose_f += 1; results_front = pose_front.detect_for_video(mp_img_f, _ts_pose_f)
         frame_front_out = frame_front.copy()
 
         if results_front.pose_landmarks:
-            landmarks_f = results_front.pose_landmarks.landmark
+            landmarks_f = results_front.pose_landmarks[0]
             try:
-                l_sh_lm_f  = landmarks_f[mp_pose.PoseLandmark.LEFT_SHOULDER]
-                r_sh_lm_f  = landmarks_f[mp_pose.PoseLandmark.RIGHT_SHOULDER]
-                l_hip_lm_f = landmarks_f[mp_pose.PoseLandmark.LEFT_HIP]
-                r_hip_lm_f = landmarks_f[mp_pose.PoseLandmark.RIGHT_HIP]
-                l_wr_lm_f  = landmarks_f[mp_pose.PoseLandmark.LEFT_WRIST]
-                r_wr_lm_f  = landmarks_f[mp_pose.PoseLandmark.RIGHT_WRIST]
-                l_ear_lm_f = landmarks_f[mp_pose.PoseLandmark.LEFT_EAR]
-                r_ear_lm_f = landmarks_f[mp_pose.PoseLandmark.RIGHT_EAR]
-                l_el_lm_f  = landmarks_f[mp_pose.PoseLandmark.LEFT_ELBOW]
-                r_el_lm_f  = landmarks_f[mp_pose.PoseLandmark.RIGHT_ELBOW]
-                l_kn_lm_f  = landmarks_f[mp_pose.PoseLandmark.LEFT_KNEE]
-                r_kn_lm_f  = landmarks_f[mp_pose.PoseLandmark.RIGHT_KNEE]
-                l_an_lm_f  = landmarks_f[mp_pose.PoseLandmark.LEFT_ANKLE]
-                r_an_lm_f  = landmarks_f[mp_pose.PoseLandmark.RIGHT_ANKLE]
+                l_sh_lm_f  = landmarks_f[POSE_LEFT_SHOULDER]
+                r_sh_lm_f  = landmarks_f[POSE_RIGHT_SHOULDER]
+                l_hip_lm_f = landmarks_f[POSE_LEFT_HIP]
+                r_hip_lm_f = landmarks_f[POSE_RIGHT_HIP]
+                l_wr_lm_f  = landmarks_f[POSE_LEFT_WRIST]
+                r_wr_lm_f  = landmarks_f[POSE_RIGHT_WRIST]
+                l_ear_lm_f = landmarks_f[POSE_LEFT_EAR]
+                r_ear_lm_f = landmarks_f[POSE_RIGHT_EAR]
+                l_el_lm_f  = landmarks_f[POSE_LEFT_ELBOW]
+                r_el_lm_f  = landmarks_f[POSE_RIGHT_ELBOW]
+                l_kn_lm_f  = landmarks_f[POSE_LEFT_KNEE]
+                r_kn_lm_f  = landmarks_f[POSE_RIGHT_KNEE]
+                l_an_lm_f  = landmarks_f[POSE_LEFT_ANKLE]
+                r_an_lm_f  = landmarks_f[POSE_RIGHT_ANKLE]
 
                 required_f = [l_sh_lm_f, r_sh_lm_f, l_hip_lm_f, r_hip_lm_f,
                                l_wr_lm_f, r_wr_lm_f, l_ear_lm_f, r_ear_lm_f,
