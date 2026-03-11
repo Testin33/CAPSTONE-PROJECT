@@ -45,10 +45,12 @@ KNEE_FLEXION_HIGH         = 60            # +2 to leg score
 
 # --- Group B: Upper Arm, Lower Arm, Wrist ---
 ARM_ABDUCTION_THRESHOLD   = 25            # degrees (elbow-shoulder-hip from front)
-SHOULDER_RAISE_THRESHOLD  = 40            # pixels (ear-to-shoulder Y distance)
+SHOULDER_RAISE_THRESHOLD  = 0.06          # fraction of frame height (ear-to-shoulder Y distance)
 LOWER_ARM_NEUTRAL_MIN     = 60            # degrees elbow flexion
 LOWER_ARM_NEUTRAL_MAX     = 100
 WRIST_FLEXION_THRESHOLD   = 15            # degrees deviation from straight
+WRIST_DEVIATION_RATIO     = 0.20          # fraction of forearm length for radial/ulnar deviation
+WRIST_OUTSIDE_THRESHOLD   = 0.07          # fraction of frame width (wrist-shoulder X gap for lower arm abduction)
 
 # ==== REBA Manual Factors (adjustable via keyboard: L=load, C=coupling) ====
 REBA_LOAD_SCORE     = 0   # 0 (<5 kg), 1 (5–10 kg), 2 (>10 kg), +1 if shock/rapid force
@@ -357,6 +359,12 @@ for name, (cap, idx) in cam_map.items():
 
 print("Starting REBA analysis  |  Keys: P=record  Q/ESC=quit  L=load  C=coupling  A=activity")
 frame_count = 0
+prev_time   = time.time()   # initialized here; updated at end of each iteration
+
+def _resize_h(f, h):
+    """Resize frame to height h keeping aspect ratio (for safe hconcat)."""
+    fh, fw = f.shape[:2]
+    return f if fh == h else cv2.resize(f, (int(fw * h / fh), h))
 
 # ============================================================
 # Main Loop
@@ -365,8 +373,6 @@ while True:
     ret_left,  frame_left  = cap_left_side.read()
     ret_right, frame_right = cap_right_side.read()
     ret_front, frame_front = cap_front.read()
-
-    prev_time = time.time()
 
     # Initialise per-frame debug vars to safe defaults
     l_low_abd_diff = r_low_abd_diff = 0.0
@@ -416,7 +422,7 @@ while True:
         results_ls = pose_left_side.process(frame_left_rgb)
         results_lh = hands_left_side.process(frame_left_rgb)
         frame_left_rgb.flags.writeable = True
-        frame_left_out = frame_left
+        frame_left_out = frame_left.copy()
 
         hand_lm_l = None
         if results_lh.multi_hand_landmarks and results_lh.multi_handedness:
@@ -482,7 +488,7 @@ while True:
         results_rs = pose_right_side.process(frame_right_rgb)
         results_rh = hands_right_side.process(frame_right_rgb)
         frame_right_rgb.flags.writeable = True
-        frame_right_out = frame_right
+        frame_right_out = frame_right.copy()
 
         hand_lm_r = None
         if results_rh.multi_hand_landmarks and results_rh.multi_handedness:
@@ -547,7 +553,7 @@ while True:
         frame_front_rgb.flags.writeable = False
         results_front = pose_front.process(frame_front_rgb)
         frame_front_rgb.flags.writeable = True
-        frame_front_out = frame_front
+        frame_front_out = frame_front.copy()
 
         if results_front.pose_landmarks:
             landmarks_f = results_front.pose_landmarks.landmark
@@ -590,11 +596,11 @@ while True:
                     l_low_abd_diff = abs(l_wr_f[0] - l_sh_f[0])
                     r_low_abd_diff = abs(r_wr_f[0] - r_sh_f[0])
 
-                    # Wrist outside shoulder → lower arm abducted
-                    WRIST_OUTSIDE_THRESHOLD = 45
-                    if l_wr_f[0] > l_sh_f[0] and l_low_abd_diff > WRIST_OUTSIDE_THRESHOLD:
+                    # Wrist outside shoulder → lower arm abducted (threshold normalized to frame width)
+                    wrist_outside_px = WRIST_OUTSIDE_THRESHOLD * w_front
+                    if l_wr_f[0] > l_sh_f[0] and l_low_abd_diff > wrist_outside_px:
                         front_adjustments['is_left_lower_arm_abducted'] = True
-                    if r_wr_f[0] < r_sh_f[0] and r_low_abd_diff > WRIST_OUTSIDE_THRESHOLD:
+                    if r_wr_f[0] < r_sh_f[0] and r_low_abd_diff > wrist_outside_px:
                         front_adjustments['is_right_lower_arm_abducted'] = True
 
                     # Wrist crossing body midline
@@ -616,36 +622,63 @@ while True:
                         if sign_r_sh * sign_r_wr < 0:
                             front_adjustments['is_right_lower_arm_across_midline'] = True
 
-                    # Arm abduction (elbow-shoulder-hip angle from front)
+                    # Arm abduction: from front view, check how far the elbow is lateral
+                    # of the shoulder–hip vertical line. This is a better proxy than the
+                    # elbow-shoulder-hip angle (which conflates forward flexion with abduction).
                     try:
-                        v_se_l = l_el_f - l_sh_f; v_sh_l = l_hip_f - l_sh_f
-                        n_se_l = norm(v_se_l);    n_sh_l = norm(v_sh_l)
-                        if n_se_l > 1e-6 and n_sh_l > 1e-6:
-                            cos_l = np.clip(np.dot(v_se_l, v_sh_l) / (n_se_l * n_sh_l), -1.0, 1.0)
-                            angle_left_shoulder_deg = np.degrees(np.arccos(cos_l))
-                            if angle_left_shoulder_deg > ARM_ABDUCTION_THRESHOLD:
+                        # Left arm: left elbow should be to the LEFT of left shoulder for abduction
+                        sh_width_px = abs(r_sh_f[0] - l_sh_f[0])  # shoulder width as scale ref
+                        if sh_width_px > 1e-6:
+                            l_el_lateral = l_sh_f[0] - l_el_f[0]  # positive = elbow left of shoulder
+                            angle_left_shoulder_deg = np.degrees(np.arctan2(
+                                abs(l_el_f[0] - l_sh_f[0]), max(abs(l_el_f[1] - l_sh_f[1]), 1e-6)))
+                            if l_el_lateral > 0 and angle_left_shoulder_deg > ARM_ABDUCTION_THRESHOLD:
                                 front_adjustments['is_left_arm_abducted'] = True
                     except Exception as e:
                         print(f"Warn L Sh Angle: {e}")
 
                     try:
-                        v_se_r = r_el_f - r_sh_f; v_sh_r = r_hip_f - r_sh_f
-                        n_se_r = norm(v_se_r);    n_sh_r = norm(v_sh_r)
-                        if n_se_r > 1e-6 and n_sh_r > 1e-6:
-                            cos_r = np.clip(np.dot(v_se_r, v_sh_r) / (n_se_r * n_sh_r), -1.0, 1.0)
-                            angle_right_shoulder_deg = np.degrees(np.arccos(cos_r))
-                            if angle_right_shoulder_deg > ARM_ABDUCTION_THRESHOLD:
+                        # Right arm: right elbow should be to the RIGHT of right shoulder for abduction
+                        sh_width_px = abs(r_sh_f[0] - l_sh_f[0])
+                        if sh_width_px > 1e-6:
+                            r_el_lateral = r_el_f[0] - r_sh_f[0]  # positive = elbow right of shoulder
+                            angle_right_shoulder_deg = np.degrees(np.arctan2(
+                                abs(r_el_f[0] - r_sh_f[0]), max(abs(r_el_f[1] - r_sh_f[1]), 1e-6)))
+                            if r_el_lateral > 0 and angle_right_shoulder_deg > ARM_ABDUCTION_THRESHOLD:
                                 front_adjustments['is_right_arm_abducted'] = True
                     except Exception as e:
                         print(f"Warn R Sh Angle: {e}")
 
-                    # Shoulder raise (ear-to-shoulder Y pixel distance)
+                    # Shoulder raise (ear-to-shoulder Y distance, normalized to frame height)
                     dist_l_ear_sh = abs(l_ear_f_xy[1] - l_sh_f[1])
                     dist_r_ear_sh = abs(r_ear_f_xy[1] - r_sh_f[1])
-                    if dist_l_ear_sh < SHOULDER_RAISE_THRESHOLD:
+                    shoulder_raise_px = SHOULDER_RAISE_THRESHOLD * h_front
+                    if dist_l_ear_sh < shoulder_raise_px:
                         front_adjustments['is_left_shoulder_raised'] = True
-                    if dist_r_ear_sh < SHOULDER_RAISE_THRESHOLD:
+                    if dist_r_ear_sh < shoulder_raise_px:
                         front_adjustments['is_right_shoulder_raised'] = True
+
+                    # Wrist lateral (radial/ulnar) deviation from front view.
+                    # If the wrist X deviates from the elbow-to-shoulder line by more than
+                    # WRIST_DEVIATION_RATIO of the forearm length, flag as bent from midline.
+                    try:
+                        l_forearm = norm(l_wr_f - l_el_f)
+                        if l_forearm > 1e-6:
+                            l_wr_dev = abs((l_wr_f[0] - l_el_f[0]) - (l_el_f[0] - l_sh_f[0]) *
+                                          (l_forearm / max(norm(l_el_f - l_sh_f), 1e-6)))
+                            if l_wr_dev / l_forearm > WRIST_DEVIATION_RATIO:
+                                front_adjustments['is_left_wrist_bent_from_midline'] = True
+                    except Exception as e:
+                        print(f"Warn L Wrist Dev: {e}")
+                    try:
+                        r_forearm = norm(r_wr_f - r_el_f)
+                        if r_forearm > 1e-6:
+                            r_wr_dev = abs((r_wr_f[0] - r_el_f[0]) - (r_el_f[0] - r_sh_f[0]) *
+                                          (r_forearm / max(norm(r_el_f - r_sh_f), 1e-6)))
+                            if r_wr_dev / r_forearm > WRIST_DEVIATION_RATIO:
+                                front_adjustments['is_right_wrist_bent_from_midline'] = True
+                    except Exception as e:
+                        print(f"Warn R Wrist Dev: {e}")
 
                     # Trunk side bend
                     v_sh  = r_sh_f  - l_sh_f;  v_hip = r_hip_f - l_hip_f
@@ -702,6 +735,20 @@ while True:
                                 front_adjustments['is_knee_flexed_moderate'] = True
                     except Exception as e:
                         print(f"Warn Knee Flex: {e}")
+
+                    # Unilateral stance detection (ankle X spread relative to hip width)
+                    try:
+                        an_visible = (l_an_lm_f.visibility > 0.5 and r_an_lm_f.visibility > 0.5)
+                        if an_visible:
+                            l_an_f_x = l_an_lm_f.x * w_front
+                            r_an_f_x = r_an_lm_f.x * w_front
+                            hip_width = abs(r_hip_f[0] - l_hip_f[0])
+                            ankle_spread = abs(r_an_f_x - l_an_f_x)
+                            # If ankle spread < 30% of hip width, person is on one leg or feet together
+                            if hip_width > 1e-6 and (ankle_spread / hip_width) < 0.30:
+                                front_adjustments['is_unilateral_stance'] = True
+                    except Exception as e:
+                        print(f"Warn Stance: {e}")
 
                     # Draw front skeleton overlays
                     cv2.line(frame_front_out, tuple(sh_mid_f.astype(int)), tuple(hip_mid_f.astype(int)), (255, 255, 0), 1)
@@ -789,11 +836,11 @@ while True:
             l_val = left_c  if l_is_num else -1
             r_val = right_c if r_is_num else -1
             if l_val >= r_val:
-                worst_c       = left_c  if l_is_num else right_c
-                dominant_side = "Left"  if l_is_num else "Right (L Invalid)"
+                worst_c       = left_c
+                dominant_side = "Left"
             else:
                 worst_c       = right_c
-                dominant_side = "Right" if r_is_num else "Left (R Invalid)"
+                dominant_side = "Right"
 
             # Apply REBA additional factors
             try:
@@ -882,7 +929,7 @@ while True:
         draw_text_with_background(frame_right_out, "-- Right Scores --", (sx2, sy2), cv2.FONT_HERSHEY_SIMPLEX, fs, clr); sy2 += lh
         for abbr in ['UA', 'LA', 'WR', 'NK', 'TR', 'LG']:
             v = right_results["scores"].get(abbr, 'N/A')
-            draw_text_with_background(frame_right_out, txt := f"R {abbr}: {v}", (sx2, sy2), cv2.FONT_HERSHEY_SIMPLEX, fs, clr); sy2 += lh
+            draw_text_with_background(frame_right_out, f"R {abbr}: {v}", (sx2, sy2), cv2.FONT_HERSHEY_SIMPLEX, fs, clr); sy2 += lh
 
         cv2.putText(frame_right_out, f"FPS: {1.0/(time.time()-prev_time+1e-9):.1f}",
                     (10, h_right - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
@@ -930,8 +977,11 @@ while True:
         cv2.putText(frame_front_out, f"FPS: {1.0/(time.time()-prev_time+1e-9):.1f}",
                     (10, h_front - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
-        # Combine all three views horizontally
-        combined1 = cv2.hconcat([frame_left_out, frame_front_out, frame_right_out])
+        # Combine all three views horizontally (resize to common height to prevent hconcat crash)
+        target_h = min(h_left, h_front, h_right)
+        combined1 = cv2.hconcat([_resize_h(frame_left_out, target_h),
+                                  _resize_h(frame_front_out, target_h),
+                                  _resize_h(frame_right_out, target_h)])
 
         # ================================================================
         # Recording (P to start)
@@ -1002,6 +1052,7 @@ while True:
         break
 
     frame_count += 1
+    prev_time = time.time()   # reset timer at end of iteration for accurate FPS
 
 # ================================================================
 # Release resources
