@@ -943,6 +943,21 @@ while True:
             "Load_Score":    REBA_LOAD_SCORE,
             "Coupling_Score":REBA_COUPLING_SCORE,
             "Activity_Score":REBA_ACTIVITY_SCORE,
+            # Left angles
+            "L_Ang_UA":      round(left_results["angles"].get("upper_arm", "N/A"), 2) if isinstance(left_results["angles"].get("upper_arm"), float) else "N/A",
+            "L_Ang_LA":      round(left_results["angles"].get("lower_arm", "N/A"), 2) if isinstance(left_results["angles"].get("lower_arm"), float) else "N/A",
+            "L_Ang_WR":      round(left_results["angles"].get("wrist",     "N/A"), 2) if isinstance(left_results["angles"].get("wrist"),     float) else "N/A",
+            "L_Ang_NK":      round(left_results["angles"].get("neck",      "N/A"), 2) if isinstance(left_results["angles"].get("neck"),      float) else "N/A",
+            "L_Ang_TR":      round(left_results["angles"].get("trunk",     "N/A"), 2) if isinstance(left_results["angles"].get("trunk"),     float) else "N/A",
+            # Right angles
+            "R_Ang_UA":      round(right_results["angles"].get("upper_arm", "N/A"), 2) if isinstance(right_results["angles"].get("upper_arm"), float) else "N/A",
+            "R_Ang_LA":      round(right_results["angles"].get("lower_arm", "N/A"), 2) if isinstance(right_results["angles"].get("lower_arm"), float) else "N/A",
+            "R_Ang_WR":      round(right_results["angles"].get("wrist",     "N/A"), 2) if isinstance(right_results["angles"].get("wrist"),     float) else "N/A",
+            "R_Ang_NK":      round(right_results["angles"].get("neck",      "N/A"), 2) if isinstance(right_results["angles"].get("neck"),      float) else "N/A",
+            "R_Ang_TR":      round(right_results["angles"].get("trunk",     "N/A"), 2) if isinstance(right_results["angles"].get("trunk"),     float) else "N/A",
+            # Knee angles (front camera)
+            "L_Ang_Knee":    round(l_knee_flex, 2),
+            "R_Ang_Knee":    round(r_knee_flex, 2),
         }
 
         # ================================================================
