@@ -15,12 +15,12 @@ import urllib.request
 RUN_TS     = time.strftime("%Y%m%d-%H%M%S")
 OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_NAME  = f"{RUN_TS}_REBA"
-
+#20260317_REBA
 VIDEO_FPS      = 15.0
 VIDEO_CODEC    = 'mp4v'
 VIDEO_OUT_PATH = os.path.join(OUTPUT_DIR, f"{BASE_NAME}.mp4")
 CSV_OUT_PATH   = os.path.join(OUTPUT_DIR, f"{BASE_NAME}.csv")
-
+# downloaads
 video_writer = None
 csv_fh       = None
 csv_writer   = None
@@ -29,7 +29,7 @@ recording    = False
 # ==== Camera Indices ====
 LEFT_SIDE_CAMERA_INDEX  = 1   # Camera for LEFT side view
 RIGHT_SIDE_CAMERA_INDEX = 2   # Camera for RIGHT side view
-FRONT_CAMERA_INDEX      = 0   # Camera for Front view
+FRONT_CAMERA_INDEX      = 0  # Camera for Front view
 
 # ==== REBA Thresholds ====
 # --- Group A: Trunk, Neck, Legs ---
@@ -81,6 +81,10 @@ POSE_LEFT_KNEE      = 25
 POSE_RIGHT_KNEE     = 26
 POSE_LEFT_ANKLE     = 27
 POSE_RIGHT_ANKLE    = 28
+POSE_LEFT_HEEL      = 29
+POSE_RIGHT_HEEL     = 30
+POSE_LEFT_FOOT_INDEX  = 31
+POSE_RIGHT_FOOT_INDEX = 32
 
 # Hand landmark index (replaces mp_hands.HandLandmark)
 HAND_MIDDLE_FINGER_PIP = 10
@@ -501,7 +505,7 @@ while True:
                 l_ear_lm = landmarks_ls[POSE_LEFT_EAR]
 
                 required_lms = [l_sh_lm, l_el_lm, l_wr_lm, l_hip_lm, l_ear_lm]
-                if all(lm.visibility > 0.6 for lm in required_lms):
+                if all(lm.visibility > 0.3 for lm in required_lms):
                     left_results["valid"] = True
                     l_sh_pt  = (int(l_sh_lm.x * w_left),  int(l_sh_lm.y * h_left))
                     l_el_pt  = (int(l_el_lm.x * w_left),  int(l_el_lm.y * h_left))
@@ -535,6 +539,18 @@ while True:
                     cv2.line(frame_left_out, l_hip_pt, hip_vert_down, (0, 0, 255), 1)
                     cv2.line(frame_left_out, l_sh_pt, l_ear_pt, (0, 0, 255), 1)
 
+                    # Foot center marker (midpoint between heel and foot index toe)
+                    try:
+                        l_heel_lm = landmarks_ls[POSE_LEFT_HEEL]
+                        l_foot_lm = landmarks_ls[POSE_LEFT_FOOT_INDEX]
+                        if l_heel_lm.visibility > 0.4 and l_foot_lm.visibility > 0.4:
+                            l_foot_cx = int((l_heel_lm.x + l_foot_lm.x) / 2 * w_left)
+                            l_foot_cy = int((l_heel_lm.y + l_foot_lm.y) / 2 * h_left)
+                            cv2.circle(frame_left_out, (l_foot_cx, l_foot_cy), 2, (0, 255, 0), -1)
+                            cv2.circle(frame_left_out, (l_foot_cx, l_foot_cy), 4, (255, 255, 255), 1)
+                    except (IndexError, Exception):
+                        pass
+
             except (IndexError, Exception) as e:
                 left_results["valid"] = False
                 print(f"Err Left Side LMs: {e}")
@@ -566,7 +582,7 @@ while True:
                 r_ear_lm = landmarks_rs[POSE_RIGHT_EAR]
 
                 required_rms = [r_sh_lm, r_el_lm, r_wr_lm, r_hip_lm, r_ear_lm]
-                if all(lm.visibility > 0.6 for lm in required_rms):
+                if all(lm.visibility > 0.3 for lm in required_rms):
                     right_results["valid"] = True
                     r_sh_pt  = (int(r_sh_lm.x * w_right),  int(r_sh_lm.y * h_right))
                     r_el_pt  = (int(r_el_lm.x * w_right),  int(r_el_lm.y * h_right))
@@ -599,6 +615,18 @@ while True:
                     cv2.line(frame_right_out, r_sh_pt, r_hip_pt, (0, 0, 255), 1)
                     cv2.line(frame_right_out, r_hip_pt, hip_vert_down_r, (0, 0, 255), 1)
                     cv2.line(frame_right_out, r_sh_pt, r_ear_pt, (0, 0, 255), 1)
+
+                    # Foot center marker (midpoint between heel and foot index toe)
+                    try:
+                        r_heel_lm = landmarks_rs[POSE_RIGHT_HEEL]
+                        r_foot_lm = landmarks_rs[POSE_RIGHT_FOOT_INDEX]
+                        if r_heel_lm.visibility > 0.4 and r_foot_lm.visibility > 0.4:
+                            r_foot_cx = int((r_heel_lm.x + r_foot_lm.x) / 2 * w_right)
+                            r_foot_cy = int((r_heel_lm.y + r_foot_lm.y) / 2 * h_right)
+                            cv2.circle(frame_right_out, (r_foot_cx, r_foot_cy), 2, (0, 255, 0), -1)
+                            cv2.circle(frame_right_out, (r_foot_cx, r_foot_cy), 4, (255, 255, 255), 1)
+                    except (IndexError, Exception):
+                        pass
 
             except (IndexError, Exception) as e:
                 right_results["valid"] = False
