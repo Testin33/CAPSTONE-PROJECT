@@ -27,9 +27,9 @@ csv_writer   = None
 recording    = False
 
 # ==== Camera Indices ====
-LEFT_SIDE_CAMERA_INDEX  = 1   # Camera for LEFT side view
+LEFT_SIDE_CAMERA_INDEX  = 0   # Camera for LEFT side view
 RIGHT_SIDE_CAMERA_INDEX = 2   # Camera for RIGHT side view
-FRONT_CAMERA_INDEX      = 0   # Camera for Front view
+FRONT_CAMERA_INDEX      = 1   # Camera for Front view
 
 # ==== REBA Thresholds ====
 # --- Group A: Trunk, Neck, Legs ---
@@ -364,15 +364,22 @@ def get_reba_component_scores(side, upper_arm_angle, lower_arm_angle, wrist_angl
         wrist_score = 1   # default neutral when hand not detected
 
     # ---- Neck (REBA: base 1-2, +1 twist, +1 side bend → max 4, capped at 3) ----
-    nk_ref     = -neck_angle if negate else neck_angle
-    neck_flex  = 160 - nk_ref   # empirical offset; ~0 when upright, increases with flexion
+    # neck_angle = calculate_angle_with_sign(ear, shoulder, hip)
+    # When upright: ear-shoulder-hip angle ≈ 180° (straight line) → signed angle ≈ ±180
+    # When neck flexes forward: angle decreases from 180
+    # neck_flex = deviation from straight (0 = upright, increases with flexion)
+    nk_ref    = -neck_angle if negate else neck_angle
+    neck_flex = abs(abs(nk_ref) - 180.0)  # 0 when upright, increases with flexion/extension
     neck_score = 1 if neck_flex <= NECK_FLEXION_THRESHOLD else 2
     if adj_flags.get('is_neck_side_bent', False): neck_score += 1
     if adj_flags.get('is_neck_twisted',   False): neck_score += 1
 
     # ---- Trunk (REBA: base 1-4, +1 twist, +1 side bend → max 6, capped at 5) ----
+    # trunk_angle = calculate_angle_with_sign(shoulder, hip, vertical_down)
+    # When upright: shoulder-hip-vertical angle ≈ 180° → signed angle ≈ ±180
+    # Flexion forward reduces this angle; extension increases it past 180
     tr_ref     = -trunk_angle if negate else trunk_angle
-    trunk_flex = 180 - abs(tr_ref)   # ~0 when upright, increases with flexion
+    trunk_flex = abs(abs(tr_ref) - 180.0)  # 0 when upright, increases with both flexion and extension
     if   trunk_flex <= TRUNK_FLEXION_BINS[0]: trunk_score = 1
     elif trunk_flex <= TRUNK_FLEXION_BINS[1]: trunk_score = 2
     elif trunk_flex <= TRUNK_FLEXION_BINS[2]: trunk_score = 3
@@ -427,6 +434,7 @@ def _resize_h(f, h):
     return f if fh == h else cv2.resize(f, (int(fw * h / fh), h))
 
 # ============================================================
+
 # Main Loop
 # ============================================================
 while True:
@@ -501,7 +509,7 @@ while True:
                 l_ear_lm = landmarks_ls[POSE_LEFT_EAR]
 
                 required_lms = [l_sh_lm, l_el_lm, l_wr_lm, l_hip_lm, l_ear_lm]
-                if all(lm.visibility > 0.6 for lm in required_lms):
+                if all(lm.visibility > 0.3 for lm in required_lms):
                     left_results["valid"] = True
                     l_sh_pt  = (int(l_sh_lm.x * w_left),  int(l_sh_lm.y * h_left))
                     l_el_pt  = (int(l_el_lm.x * w_left),  int(l_el_lm.y * h_left))
@@ -566,7 +574,7 @@ while True:
                 r_ear_lm = landmarks_rs[POSE_RIGHT_EAR]
 
                 required_rms = [r_sh_lm, r_el_lm, r_wr_lm, r_hip_lm, r_ear_lm]
-                if all(lm.visibility > 0.6 for lm in required_rms):
+                if all(lm.visibility > 0.3 for lm in required_rms):
                     right_results["valid"] = True
                     r_sh_pt  = (int(r_sh_lm.x * w_right),  int(r_sh_lm.y * h_right))
                     r_el_pt  = (int(r_el_lm.x * w_right),  int(r_el_lm.y * h_right))
@@ -634,7 +642,7 @@ while True:
                                l_wr_lm_f, r_wr_lm_f, l_ear_lm_f, r_ear_lm_f,
                                l_el_lm_f, r_el_lm_f]
 
-                if all(lm.visibility > 0.6 for lm in required_f):
+                if all(lm.visibility > 0.3 for lm in required_f):
                     l_sh_f      = np.array([l_sh_lm_f.x * w_front,  l_sh_lm_f.y * h_front])
                     r_sh_f      = np.array([r_sh_lm_f.x * w_front,  r_sh_lm_f.y * h_front])
                     l_hip_f     = np.array([l_hip_lm_f.x * w_front, l_hip_lm_f.y * h_front])
@@ -661,23 +669,17 @@ while True:
                         front_adjustments['is_right_lower_arm_abducted'] = True
 
                     # Wrist crossing body midline
-                    if abs(sh_mid_f[0] - hip_mid_f[0]) < 1e-6:
-                        if (l_sh_f[0] < sh_mid_f[0]) != (l_wr_f[0] < sh_mid_f[0]):
-                            front_adjustments['is_left_lower_arm_across_midline'] = True
-                        if (r_sh_f[0] > sh_mid_f[0]) != (r_wr_f[0] > sh_mid_f[0]):
-                            front_adjustments['is_right_lower_arm_across_midline'] = True
-                    else:
-                        A = hip_mid_f[1] - sh_mid_f[1]
-                        B = sh_mid_f[0]  - hip_mid_f[0]
-                        C = -A * sh_mid_f[0] - B * sh_mid_f[1]
-                        sign_l_sh = A*l_sh_f[0] + B*l_sh_f[1] + C
-                        sign_l_wr = A*l_wr_f[0] + B*l_wr_f[1] + C
-                        if sign_l_sh * sign_l_wr < 0:
-                            front_adjustments['is_left_lower_arm_across_midline'] = True
-                        sign_r_sh = A*r_sh_f[0] + B*r_sh_f[1] + C
-                        sign_r_wr = A*r_wr_f[0] + B*r_wr_f[1] + C
-                        if sign_r_sh * sign_r_wr < 0:
-                            front_adjustments['is_right_lower_arm_across_midline'] = True
+                    A = hip_mid_f[1] - sh_mid_f[1]
+                    B = sh_mid_f[0]  - hip_mid_f[0]
+                    C = -A * sh_mid_f[0] - B * sh_mid_f[1]
+                    sign_l_sh = A*l_sh_f[0] + B*l_sh_f[1] + C
+                    sign_l_wr = A*l_wr_f[0] + B*l_wr_f[1] + C
+                    if sign_l_sh * sign_l_wr < 0:
+                        front_adjustments['is_left_lower_arm_across_midline'] = True
+                    sign_r_sh = A*r_sh_f[0] + B*r_sh_f[1] + C
+                    sign_r_wr = A*r_wr_f[0] + B*r_wr_f[1] + C
+                    if sign_r_sh * sign_r_wr < 0:
+                        front_adjustments['is_right_lower_arm_across_midline'] = True
 
                     # Arm abduction: from front view, check how far the elbow is lateral
                     # of the shoulder–hip vertical line. This is a better proxy than the
