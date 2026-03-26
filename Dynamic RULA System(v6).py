@@ -419,7 +419,8 @@ for name, (cap, idx) in cam_map.items():
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 print("Starting REBA analysis  |  Keys: P=record  Q/ESC=quit  L=load  C=coupling  A=activity")
-frame_count = 0
+frame_count     = 0
+rec_frame_count = 0          # resets to 0 when recording starts
 prev_time   = time.time()   # initialized here; updated at end of each iteration
 
 def _resize_h(f, h):
@@ -918,7 +919,7 @@ while True:
         row_data = {
             "Date":          _now.strftime("%Y-%m-%d"),
             "Time":          _now.strftime("%H:%M:%S"),
-            "Frame":         frame_count,
+            "Frame":         rec_frame_count,
             # Left
             "L_UA_Score":    left_results["scores"].get("UA",  "N/A"),
             "L_LA_Score":    left_results["scores"].get("LA",  "N/A"),
@@ -1019,7 +1020,7 @@ while True:
             f"Knee flex high (>{KNEE_FLEXION_HIGH}):     {front_adjustments['is_knee_flexed_high']}",
             f"---",
             f"Load:{REBA_LOAD_SCORE}  Coupling:{REBA_COUPLING_SCORE}  Activity:{REBA_ACTIVITY_SCORE}  [L/C/A keys]",
-            f"Frame: {frame_count}  {'[REC]' if recording else ''}",
+            f"Frame: {rec_frame_count if recording else frame_count}  {'[REC]' if recording else ''}",
         ]
         for line in lines_front:
             draw_text_with_background(frame_front_out, line, (ax, ay), cv2.FONT_HERSHEY_SIMPLEX, afs, (0, 255, 255)); ay += alh
@@ -1074,6 +1075,8 @@ while True:
                 csv_writer.writerow(row_data)
                 csv_fh.flush()
 
+            rec_frame_count += 1
+
         cv2.imshow("Dynamic REBA System", combined1)
 
         # Close if window X button clicked
@@ -1093,6 +1096,7 @@ while True:
 
     if key == ord('p'):
         recording = True
+        rec_frame_count = 0
         print(f"Recording started → {VIDEO_OUT_PATH}")
         print(f"CSV logging started → {CSV_OUT_PATH}")
 
