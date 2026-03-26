@@ -8,6 +8,9 @@ import os
 from numpy.linalg import norm
 import sys
 import traceback
+
+
+
 import math
 import urllib.request
 import datetime
@@ -973,7 +976,7 @@ while True:
                     f'L REBA: {ls_sc["C"]}  (A:{ls_sc["A"]} B:{ls_sc["B"]})',
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-        sx = int(w_left * 0.65); sy = 55; lh = 20; fs = 0.42; clr = (0, 255, 255)
+        sx = 10; sy = 55; lh = 20; fs = 0.42; clr = (0, 255, 255)
         draw_text_with_background(frame_left_out, "-- Left Angles --", (sx, sy), cv2.FONT_HERSHEY_SIMPLEX, fs, clr); sy += lh
         for lbl, key in [("UA", "upper_arm"), ("LA", "lower_arm"), ("WR", "wrist"),
                           ("NK", "neck"),      ("TR", "trunk")]:
@@ -1017,27 +1020,13 @@ while True:
         # Display — Front frame (adjustments + final score)
         # ================================================================
         ax = 10; ay = 28; alh = 18; afs = 0.4
+        def _b(v): return "T" if v else "F"
         lines_front = [
-            f"L lower arm across midline: {front_adjustments['is_left_lower_arm_across_midline']}",
-            f"R lower arm across midline: {front_adjustments['is_right_lower_arm_across_midline']}",
-            f"L lower arm abducted: {front_adjustments['is_left_lower_arm_abducted']} ({l_low_abd_diff:.0f}px)",
-            f"R lower arm abducted: {front_adjustments['is_right_lower_arm_abducted']} ({r_low_abd_diff:.0f}px)",
-            f"---",
-            f"L arm abducted: {front_adjustments['is_left_arm_abducted']} ({angle_left_shoulder_deg:.1f}deg)",
-            f"R arm abducted: {front_adjustments['is_right_arm_abducted']} ({angle_right_shoulder_deg:.1f}deg)",
-            f"L shoulder raised: {front_adjustments['is_left_shoulder_raised']} ({dist_l_ear_sh:.0f}px)",
-            f"R shoulder raised: {front_adjustments['is_right_shoulder_raised']} ({dist_r_ear_sh:.0f}px)",
-            f"---",
-            f"Neck twisted: {front_adjustments['is_neck_twisted']} (z={neck_z_diff:.3f})",
-            f"Neck side bent: {front_adjustments['is_neck_side_bent']} ({angle_neck_vert_deg:.1f}deg)",
-            f"Trunk twisted: {front_adjustments['is_trunk_twisted']} (z={trunk_z_diff:.3f})",
-            f"Trunk side bent: {front_adjustments['is_trunk_side_bent']} ({angle_diff_trunk_deg:.1f}deg)",
-            f"---",
-            f"Knee flex moderate (>{KNEE_FLEXION_MODERATE}): {front_adjustments['is_knee_flexed_moderate']} L={l_knee_flex:.0f} R={r_knee_flex:.0f}",
-            f"Knee flex high (>{KNEE_FLEXION_HIGH}):     {front_adjustments['is_knee_flexed_high']}",
-            f"---",
-            f"Load:{REBA_LOAD_SCORE}  Coupling:{REBA_COUPLING_SCORE}  Activity:{REBA_ACTIVITY_SCORE}  [L/C/A keys]",
-            f"Frame: {frame_count}  {'[REC]' if recording else ''}",
+            f"LowArm cross: L={_b(front_adjustments['is_left_lower_arm_across_midline'])} R={_b(front_adjustments['is_right_lower_arm_across_midline'])}  abd: L={_b(front_adjustments['is_left_lower_arm_abducted'])} R={_b(front_adjustments['is_right_lower_arm_abducted'])}",
+            f"Arm abd: L={_b(front_adjustments['is_left_arm_abducted'])}({angle_left_shoulder_deg:.0f}d) R={_b(front_adjustments['is_right_arm_abducted'])}({angle_right_shoulder_deg:.0f}d)  Sh.raised: L={_b(front_adjustments['is_left_shoulder_raised'])} R={_b(front_adjustments['is_right_shoulder_raised'])}",
+            f"Neck twist={_b(front_adjustments['is_neck_twisted'])} bent={_b(front_adjustments['is_neck_side_bent'])}({angle_neck_vert_deg:.0f}d)  Trunk twist={_b(front_adjustments['is_trunk_twisted'])} bent={_b(front_adjustments['is_trunk_side_bent'])}({angle_diff_trunk_deg:.0f}d)",
+            f"Knee mod={_b(front_adjustments['is_knee_flexed_moderate'])} L={l_knee_flex:.0f} R={r_knee_flex:.0f}  high={_b(front_adjustments['is_knee_flexed_high'])}",
+            f"Load:{REBA_LOAD_SCORE}  Coupling:{REBA_COUPLING_SCORE}  Activity:{REBA_ACTIVITY_SCORE}  [L/C/A]    Frame:{frame_count}  {'[REC]' if recording else ''}",
         ]
         for line in lines_front:
             draw_text_with_background(frame_front_out, line, (ax, ay), cv2.FONT_HERSHEY_SIMPLEX, afs, (0, 255, 255)); ay += alh
@@ -1167,4 +1156,4 @@ pose_front.close()
 hands_left_side.close()
 hands_right_side.close()
 hands_front.close()
-print("Done.")
+print("JOB FINISH? JOB NOT FINISH!- Kobe")
