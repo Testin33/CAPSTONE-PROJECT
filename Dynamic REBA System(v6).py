@@ -10,6 +10,7 @@ import sys
 import traceback
 import math
 import urllib.request
+import datetime
 
 # ==== Output Paths (relative to script location) ====
 RUN_TS     = time.strftime("%Y%m%d-%H%M%S")
@@ -425,8 +426,9 @@ for name, (cap, idx) in cam_map.items():
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 print("Starting REBA analysis  |  Keys: P=record  Q/ESC=quit  L=load  C=coupling  A=activity")
-frame_count = 0
-prev_time   = time.time()   # initialized here; updated at end of each iteration
+frame_count     = 0
+rec_frame_count = 0
+prev_time       = time.time()   # initialized here; updated at end of each iteration
 
 def _resize_h(f, h):
     """Resize frame to height h keeping aspect ratio (for safe hconcat)."""
@@ -915,8 +917,11 @@ while True:
         # ================================================================
         # CSV row data
         # ================================================================
+        _now = datetime.datetime.now()
         row_data = {
-            "Frame":         frame_count,
+            "Date":          _now.strftime("%Y-%m-%d"),
+            "Time":          _now.strftime("%H:%M:%S"),
+            "Frame":         rec_frame_count,
             # Left
             "L_UA_Score":    left_results["scores"].get("UA",  "N/A"),
             "L_LA_Score":    left_results["scores"].get("LA",  "N/A"),
@@ -1061,6 +1066,7 @@ while True:
         # Recording (P to start)
         # ================================================================
         if recording:
+            rec_frame_count += 1
             if video_writer is None:
                 h_c, w_c = combined1.shape[:2]
                 fourcc = cv2.VideoWriter_fourcc(*VIDEO_CODEC)
@@ -1104,24 +1110,25 @@ while True:
     # ================================================================
     key = cv2.waitKey(5) & 0xFF
 
-    if key == ord('p'):
+    if key == ord('p') or key == ord('P'):
         recording = True
+        rec_frame_count = 0
         print(f"Recording started → {VIDEO_OUT_PATH}")
         print(f"CSV logging started → {CSV_OUT_PATH}")
 
-    elif key == ord('l'):
+    elif key == ord('l') or key == ord('L'):
         REBA_LOAD_SCORE = (REBA_LOAD_SCORE + 1) % 4
         print(f"Load score set to {REBA_LOAD_SCORE}  (0=<5kg 1=5-10kg 2=>10kg 3=shock/rapid)")
 
-    elif key == ord('c'):
+    elif key == ord('c') or key == ord('C'):
         REBA_COUPLING_SCORE = (REBA_COUPLING_SCORE + 1) % 4
         print(f"Coupling score set to {REBA_COUPLING_SCORE}  (0=good 1=fair 2=poor 3=unacceptable)")
 
-    elif key == ord('a'):
+    elif key == ord('a') or key == ord('A'):
         REBA_ACTIVITY_SCORE = (REBA_ACTIVITY_SCORE + 1) % 4
         print(f"Activity score set to {REBA_ACTIVITY_SCORE}  (0=none 1=static 2=+repeated 3=+rapid)")
 
-    elif key == ord('q') or key == 27:
+    elif key == ord('q') or key == ord('Q') or key == 27:
         print("Exit key pressed.")
         break
 
