@@ -3,6 +3,7 @@ import mediapipe as mp
 import numpy as np
 import pandas as pd
 import time
+import datetime
 import csv
 import os
 from numpy.linalg import norm
@@ -913,7 +914,10 @@ while True:
         # ================================================================
         # CSV row data
         # ================================================================
+        _now = datetime.datetime.now()
         row_data = {
+            "Date":          _now.strftime("%Y-%m-%d"),
+            "Time":          _now.strftime("%H:%M:%S"),
             "Frame":         frame_count,
             # Left
             "L_UA_Score":    left_results["scores"].get("UA",  "N/A"),
