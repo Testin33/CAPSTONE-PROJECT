@@ -3,6 +3,7 @@ import mediapipe as mp
 import numpy as np
 import pandas as pd
 import time
+import datetime
 import csv
 import os
 from numpy.linalg import norm
@@ -10,7 +11,6 @@ import sys
 import traceback
 import math
 import urllib.request
-import datetime
 
 # ==== Output Paths (relative to script location) ====
 RUN_TS     = time.strftime("%Y%m%d-%H%M%S")
@@ -28,9 +28,9 @@ csv_writer   = None
 recording    = False
 
 # ==== Camera Indices ====
-LEFT_SIDE_CAMERA_INDEX  = 1  # Camera for LEFT side view
-RIGHT_SIDE_CAMERA_INDEX = 0   # Camera for RIGHT side view
-FRONT_CAMERA_INDEX      = 2   # Camera for Front view
+LEFT_SIDE_CAMERA_INDEX  = 1   # Camera for LEFT side view
+RIGHT_SIDE_CAMERA_INDEX = 2   # Camera for RIGHT side view
+FRONT_CAMERA_INDEX      = 0   # Camera for Front view
 
 # ==== REBA Thresholds ====
 # --- Group A: Trunk, Neck, Legs ---
@@ -365,22 +365,15 @@ def get_reba_component_scores(side, upper_arm_angle, lower_arm_angle, wrist_angl
         wrist_score = 1   # default neutral when hand not detected
 
     # ---- Neck (REBA: base 1-2, +1 twist, +1 side bend → max 4, capped at 3) ----
-    # neck_angle = calculate_angle_with_sign(ear, shoulder, hip)
-    # When upright: ear-shoulder-hip angle ≈ 180° (straight line) → signed angle ≈ ±180
-    # When neck flexes forward: angle decreases from 180
-    # neck_flex = deviation from straight (0 = upright, increases with flexion)
-    nk_ref    = -neck_angle if negate else neck_angle
-    neck_flex = abs(abs(nk_ref) - 180.0)  # 0 when upright, increases with flexion/extension
+    nk_ref     = -neck_angle if negate else neck_angle
+    neck_flex  = 160 - nk_ref   # empirical offset; ~0 when upright, increases with flexion
     neck_score = 1 if neck_flex <= NECK_FLEXION_THRESHOLD else 2
     if adj_flags.get('is_neck_side_bent', False): neck_score += 1
     if adj_flags.get('is_neck_twisted',   False): neck_score += 1
 
     # ---- Trunk (REBA: base 1-4, +1 twist, +1 side bend → max 6, capped at 5) ----
-    # trunk_angle = calculate_angle_with_sign(shoulder, hip, vertical_down)
-    # When upright: shoulder-hip-vertical angle ≈ 180° → signed angle ≈ ±180
-    # Flexion forward reduces this angle; extension increases it past 180
     tr_ref     = -trunk_angle if negate else trunk_angle
-    trunk_flex = abs(abs(tr_ref) - 180.0)  # 0 when upright, increases with both flexion and extension
+    trunk_flex = 180 - abs(tr_ref)   # ~0 when upright, increases with flexion
     if   trunk_flex <= TRUNK_FLEXION_BINS[0]: trunk_score = 1
     elif trunk_flex <= TRUNK_FLEXION_BINS[1]: trunk_score = 2
     elif trunk_flex <= TRUNK_FLEXION_BINS[2]: trunk_score = 3
@@ -427,8 +420,8 @@ for name, (cap, idx) in cam_map.items():
 
 print("Starting REBA analysis  |  Keys: P=record  Q/ESC=quit  L=load  C=coupling  A=activity")
 frame_count     = 0
-rec_frame_count = 0
-prev_time       = time.time()   # initialized here; updated at end of each iteration
+rec_frame_count = 0          # resets to 0 when recording starts
+prev_time   = time.time()   # initialized here; updated at end of each iteration
 
 def _resize_h(f, h):
     """Resize frame to height h keeping aspect ratio (for safe hconcat)."""
@@ -436,7 +429,6 @@ def _resize_h(f, h):
     return f if fh == h else cv2.resize(f, (int(fw * h / fh), h))
 
 # ============================================================
-
 # Main Loop
 # ============================================================
 while True:
@@ -510,8 +502,8 @@ while True:
                 l_hip_lm = landmarks_ls[POSE_LEFT_HIP]
                 l_ear_lm = landmarks_ls[POSE_LEFT_EAR]
 
-                required_lms = [l_sh_lm, l_el_lm, l_wr_lm, l_hip_lm]
-                if all(lm.visibility > 0.3 for lm in required_lms):
+                required_lms = [l_sh_lm, l_el_lm, l_wr_lm, l_hip_lm, l_ear_lm]
+                if all(lm.visibility > 0.6 for lm in required_lms):
                     left_results["valid"] = True
                     l_sh_pt  = (int(l_sh_lm.x * w_left),  int(l_sh_lm.y * h_left))
                     l_el_pt  = (int(l_el_lm.x * w_left),  int(l_el_lm.y * h_left))
@@ -575,8 +567,8 @@ while True:
                 r_hip_lm = landmarks_rs[POSE_RIGHT_HIP]
                 r_ear_lm = landmarks_rs[POSE_RIGHT_EAR]
 
-                required_rms = [r_sh_lm, r_el_lm, r_wr_lm, r_hip_lm]
-                if all(lm.visibility > 0.1 for lm in required_rms):
+                required_rms = [r_sh_lm, r_el_lm, r_wr_lm, r_hip_lm, r_ear_lm]
+                if all(lm.visibility > 0.6 for lm in required_rms):
                     right_results["valid"] = True
                     r_sh_pt  = (int(r_sh_lm.x * w_right),  int(r_sh_lm.y * h_right))
                     r_el_pt  = (int(r_el_lm.x * w_right),  int(r_el_lm.y * h_right))
@@ -644,7 +636,7 @@ while True:
                                l_wr_lm_f, r_wr_lm_f, l_ear_lm_f, r_ear_lm_f,
                                l_el_lm_f, r_el_lm_f]
 
-                if all(lm.visibility > 0.3 for lm in required_f):
+                if all(lm.visibility > 0.6 for lm in required_f):
                     l_sh_f      = np.array([l_sh_lm_f.x * w_front,  l_sh_lm_f.y * h_front])
                     r_sh_f      = np.array([r_sh_lm_f.x * w_front,  r_sh_lm_f.y * h_front])
                     l_hip_f     = np.array([l_hip_lm_f.x * w_front, l_hip_lm_f.y * h_front])
@@ -671,17 +663,23 @@ while True:
                         front_adjustments['is_right_lower_arm_abducted'] = True
 
                     # Wrist crossing body midline
-                    A = hip_mid_f[1] - sh_mid_f[1]
-                    B = sh_mid_f[0]  - hip_mid_f[0]
-                    C = -A * sh_mid_f[0] - B * sh_mid_f[1]
-                    sign_l_sh = A*l_sh_f[0] + B*l_sh_f[1] + C
-                    sign_l_wr = A*l_wr_f[0] + B*l_wr_f[1] + C
-                    if sign_l_sh * sign_l_wr < 0:
-                        front_adjustments['is_left_lower_arm_across_midline'] = True
-                    sign_r_sh = A*r_sh_f[0] + B*r_sh_f[1] + C
-                    sign_r_wr = A*r_wr_f[0] + B*r_wr_f[1] + C
-                    if sign_r_sh * sign_r_wr < 0:
-                        front_adjustments['is_right_lower_arm_across_midline'] = True
+                    if abs(sh_mid_f[0] - hip_mid_f[0]) < 1e-6:
+                        if (l_sh_f[0] < sh_mid_f[0]) != (l_wr_f[0] < sh_mid_f[0]):
+                            front_adjustments['is_left_lower_arm_across_midline'] = True
+                        if (r_sh_f[0] > sh_mid_f[0]) != (r_wr_f[0] > sh_mid_f[0]):
+                            front_adjustments['is_right_lower_arm_across_midline'] = True
+                    else:
+                        A = hip_mid_f[1] - sh_mid_f[1]
+                        B = sh_mid_f[0]  - hip_mid_f[0]
+                        C = -A * sh_mid_f[0] - B * sh_mid_f[1]
+                        sign_l_sh = A*l_sh_f[0] + B*l_sh_f[1] + C
+                        sign_l_wr = A*l_wr_f[0] + B*l_wr_f[1] + C
+                        if sign_l_sh * sign_l_wr < 0:
+                            front_adjustments['is_left_lower_arm_across_midline'] = True
+                        sign_r_sh = A*r_sh_f[0] + B*r_sh_f[1] + C
+                        sign_r_wr = A*r_wr_f[0] + B*r_wr_f[1] + C
+                        if sign_r_sh * sign_r_wr < 0:
+                            front_adjustments['is_right_lower_arm_across_midline'] = True
 
                     # Arm abduction: from front view, check how far the elbow is lateral
                     # of the shoulder–hip vertical line. This is a better proxy than the
@@ -973,7 +971,7 @@ while True:
                     f'L REBA: {ls_sc["C"]}  (A:{ls_sc["A"]} B:{ls_sc["B"]})',
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-        sx = 10; sy = 55; lh = 20; fs = 0.42; clr = (0, 255, 255)
+        sx = int(w_left * 0.65); sy = 55; lh = 20; fs = 0.42; clr = (0, 255, 255)
         draw_text_with_background(frame_left_out, "-- Left Angles --", (sx, sy), cv2.FONT_HERSHEY_SIMPLEX, fs, clr); sy += lh
         for lbl, key in [("UA", "upper_arm"), ("LA", "lower_arm"), ("WR", "wrist"),
                           ("NK", "neck"),      ("TR", "trunk")]:
@@ -1017,13 +1015,27 @@ while True:
         # Display — Front frame (adjustments + final score)
         # ================================================================
         ax = 10; ay = 28; alh = 18; afs = 0.4
-        def _b(v): return "T" if v else "F"
         lines_front = [
-            f"LowArm cross: L={_b(front_adjustments['is_left_lower_arm_across_midline'])} R={_b(front_adjustments['is_right_lower_arm_across_midline'])}  abd: L={_b(front_adjustments['is_left_lower_arm_abducted'])} R={_b(front_adjustments['is_right_lower_arm_abducted'])}",
-            f"Arm abd: L={_b(front_adjustments['is_left_arm_abducted'])}({angle_left_shoulder_deg:.0f}d) R={_b(front_adjustments['is_right_arm_abducted'])}({angle_right_shoulder_deg:.0f}d)  Sh.raised: L={_b(front_adjustments['is_left_shoulder_raised'])} R={_b(front_adjustments['is_right_shoulder_raised'])}",
-            f"Neck twist={_b(front_adjustments['is_neck_twisted'])} bent={_b(front_adjustments['is_neck_side_bent'])}({angle_neck_vert_deg:.0f}d)  Trunk twist={_b(front_adjustments['is_trunk_twisted'])} bent={_b(front_adjustments['is_trunk_side_bent'])}({angle_diff_trunk_deg:.0f}d)",
-            f"Knee mod={_b(front_adjustments['is_knee_flexed_moderate'])} L={l_knee_flex:.0f} R={r_knee_flex:.0f}  high={_b(front_adjustments['is_knee_flexed_high'])}",
-            f"Load:{REBA_LOAD_SCORE}  Coupling:{REBA_COUPLING_SCORE}  Activity:{REBA_ACTIVITY_SCORE}  [L/C/A]    Frame:{frame_count}  {'[REC]' if recording else ''}",
+            f"L lower arm across midline: {front_adjustments['is_left_lower_arm_across_midline']}",
+            f"R lower arm across midline: {front_adjustments['is_right_lower_arm_across_midline']}",
+            f"L lower arm abducted: {front_adjustments['is_left_lower_arm_abducted']} ({l_low_abd_diff:.0f}px)",
+            f"R lower arm abducted: {front_adjustments['is_right_lower_arm_abducted']} ({r_low_abd_diff:.0f}px)",
+            f"---",
+            f"L arm abducted: {front_adjustments['is_left_arm_abducted']} ({angle_left_shoulder_deg:.1f}deg)",
+            f"R arm abducted: {front_adjustments['is_right_arm_abducted']} ({angle_right_shoulder_deg:.1f}deg)",
+            f"L shoulder raised: {front_adjustments['is_left_shoulder_raised']} ({dist_l_ear_sh:.0f}px)",
+            f"R shoulder raised: {front_adjustments['is_right_shoulder_raised']} ({dist_r_ear_sh:.0f}px)",
+            f"---",
+            f"Neck twisted: {front_adjustments['is_neck_twisted']} (z={neck_z_diff:.3f})",
+            f"Neck side bent: {front_adjustments['is_neck_side_bent']} ({angle_neck_vert_deg:.1f}deg)",
+            f"Trunk twisted: {front_adjustments['is_trunk_twisted']} (z={trunk_z_diff:.3f})",
+            f"Trunk side bent: {front_adjustments['is_trunk_side_bent']} ({angle_diff_trunk_deg:.1f}deg)",
+            f"---",
+            f"Knee flex moderate (>{KNEE_FLEXION_MODERATE}): {front_adjustments['is_knee_flexed_moderate']} L={l_knee_flex:.0f} R={r_knee_flex:.0f}",
+            f"Knee flex high (>{KNEE_FLEXION_HIGH}):     {front_adjustments['is_knee_flexed_high']}",
+            f"---",
+            f"Load:{REBA_LOAD_SCORE}  Coupling:{REBA_COUPLING_SCORE}  Activity:{REBA_ACTIVITY_SCORE}  [L/C/A keys]",
+            f"Frame: {rec_frame_count if recording else frame_count}  {'[REC]' if recording else ''}",
         ]
         for line in lines_front:
             draw_text_with_background(frame_front_out, line, (ax, ay), cv2.FONT_HERSHEY_SIMPLEX, afs, (0, 255, 255)); ay += alh
@@ -1052,7 +1064,6 @@ while True:
         # Recording (P to start)
         # ================================================================
         if recording:
-            rec_frame_count += 1
             if video_writer is None:
                 h_c, w_c = combined1.shape[:2]
                 fourcc = cv2.VideoWriter_fourcc(*VIDEO_CODEC)
@@ -1079,6 +1090,8 @@ while True:
                 csv_writer.writerow(row_data)
                 csv_fh.flush()
 
+            rec_frame_count += 1
+
         cv2.imshow("Dynamic REBA System", combined1)
 
         # Close if window X button clicked
@@ -1096,25 +1109,25 @@ while True:
     # ================================================================
     key = cv2.waitKey(5) & 0xFF
 
-    if key == ord('p') or key == ord('P'):
+    if key == ord('p'):
         recording = True
         rec_frame_count = 0
         print(f"Recording started → {VIDEO_OUT_PATH}")
         print(f"CSV logging started → {CSV_OUT_PATH}")
 
-    elif key == ord('l') or key == ord('L'):
+    elif key == ord('l'):
         REBA_LOAD_SCORE = (REBA_LOAD_SCORE + 1) % 4
         print(f"Load score set to {REBA_LOAD_SCORE}  (0=<5kg 1=5-10kg 2=>10kg 3=shock/rapid)")
 
-    elif key == ord('c') or key == ord('C'):
+    elif key == ord('c'):
         REBA_COUPLING_SCORE = (REBA_COUPLING_SCORE + 1) % 4
         print(f"Coupling score set to {REBA_COUPLING_SCORE}  (0=good 1=fair 2=poor 3=unacceptable)")
 
-    elif key == ord('a') or key == ord('A'):
+    elif key == ord('a'):
         REBA_ACTIVITY_SCORE = (REBA_ACTIVITY_SCORE + 1) % 4
         print(f"Activity score set to {REBA_ACTIVITY_SCORE}  (0=none 1=static 2=+repeated 3=+rapid)")
 
-    elif key == ord('q') or key == ord('Q') or key == 27:
+    elif key == ord('q') or key == 27:
         print("Exit key pressed.")
         break
 
@@ -1153,5 +1166,4 @@ pose_front.close()
 hands_left_side.close()
 hands_right_side.close()
 hands_front.close()
-print("JOB FINISH? JOB NOT FINISH!- Kobe")
-print("siuuuuuuuuuuuu")
+print("Done.")

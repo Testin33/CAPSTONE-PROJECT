@@ -16,11 +16,8 @@ Requires three USB cameras connected. Camera indices are configured at the top o
 - `FRONT_CAMERA_INDEX = 0` — front view
 - `LEFT_SIDE_CAMERA_INDEX = 1` — left side view
 - `RIGHT_SIDE_CAMERA_INDEX = 2` — right side view
-
 **Dependencies:** `opencv-python`, `mediapipe`, `numpy`, `pandas`
-
 ## Keyboard Controls (while running)
-
 | Key | Action |
 |-----|--------|
 | `P` | Start recording (MP4 + CSV output) |
@@ -28,14 +25,14 @@ Requires three USB cameras connected. Camera indices are configured at the top o
 | `C` | Cycle coupling score (0–3) |
 | `A` | Cycle activity score (0–3) |
 | `Q` / `ESC` | Quit |
-
 ## Outputs
 
 Both files are saved in the same directory as the script, named `YYYYMMDD-HHMMSS_REBA.mp4` and `.csv`.
 
 ## Architecture
 
-The entire system is a single-file script (`Dynamic RULA System(v6).py`) structured in these layers:
+The entire system is a single-file script (`Dynamic RULA System(v6).py`) structured in these layers: 
+
 
 ### 1. Configuration Constants (top of file)
 All tunable thresholds for REBA scoring are global constants: `TRUNK_FLEXION_BINS`, `NECK_FLEXION_THRESHOLD`, `ARM_ABDUCTION_THRESHOLD`, etc. Manual REBA factors (`REBA_LOAD_SCORE`, `REBA_COUPLING_SCORE`, `REBA_ACTIVITY_SCORE`) are toggled at runtime via keyboard.
