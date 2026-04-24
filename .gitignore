@@ -1,11 +1,32 @@
-# MediaPipe model files (auto-downloaded on first run)
 *.task
 
-# Python
+*.mp4
+*.csv
+
+[0-9]-s/
+[0-9][0-9]-s/
+
+output/
+*__sample/
+
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+env/
 
-# Output files
-*.mp4
-*.csv
+.DS_Store
+Thumbs.db
+desktop.ini
+
+.vscode/
+.idea/
+
+CLAUDE.md
+Dynamic RULA System(v6).py
