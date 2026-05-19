@@ -39,11 +39,11 @@ FRONT_CAMERA_INDEX      = 1   # Camera for Front view
 # --- Group A: Trunk, Neck, Legs ---
 TRUNK_FLEXION_BINS        = (5, 20, 60)   # degrees: boundaries for trunk scores 1/2/3/4
 TRUNK_SIDE_BEND_THRESHOLD = 15            # degrees (front view)
-TRUNK_TWIST_Z_THRESHOLD   = 0.08         # MediaPipe Z difference
+TRUNK_TWIST_Z_THRESHOLD   = 0.30         # ratio of Z-diff to shoulder-spread (~17° rotation)
 
 NECK_FLEXION_THRESHOLD    = 20            # degrees: 0-20 = score 1, >20 = score 2
 NECK_SIDE_BEND_THRESHOLD  = 15           # degrees (front view)
-NECK_TWIST_Z_THRESHOLD    = 0.05
+NECK_TWIST_Z_THRESHOLD    = 0.25         # ratio of Z-diff to ear-spread (~14° rotation)
 
 KNEE_FLEXION_MODERATE     = 30            # +1 to leg score
 KNEE_FLEXION_HIGH         = 60            # +2 to leg score
@@ -117,24 +117,15 @@ _hand_opts_1 = HandLandmarkerOptions(
     min_hand_detection_confidence=0.5,
     min_hand_presence_confidence=0.5,
     min_tracking_confidence=0.5)
-_hand_opts_2 = HandLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path=HAND_MODEL_PATH),
-    running_mode=VisionRunningMode.VIDEO,
-    num_hands=2,
-    min_hand_detection_confidence=0.5,
-    min_hand_presence_confidence=0.5,
-    min_tracking_confidence=0.5)
-
 pose_left_side   = PoseLandmarker.create_from_options(_pose_opts)
 pose_right_side  = PoseLandmarker.create_from_options(_pose_opts)
 pose_front       = PoseLandmarker.create_from_options(_pose_opts)
 hands_left_side  = HandLandmarker.create_from_options(_hand_opts_1)
 hands_right_side = HandLandmarker.create_from_options(_hand_opts_1)
-hands_front      = HandLandmarker.create_from_options(_hand_opts_2)
 
 # Per-instance monotonic timestamp counters (Tasks API requires strictly increasing values)
 _ts_pose_l = _ts_pose_r = _ts_pose_f = 0
-_ts_hand_l = _ts_hand_r = _ts_hand_f = 0
+_ts_hand_l = _ts_hand_r = 0
 
 
 # ============================================================
@@ -438,6 +429,8 @@ def _resize_h(f, h):
     fh, fw = f.shape[:2]
     return f if fh == h else cv2.resize(f, (int(fw * h / fh), h))
 
+def _b(v): return "T" if v else "F"
+
 # ============================================================
 
 # Main Loop
@@ -723,13 +716,14 @@ while True:
                         front_adjustments['is_right_shoulder_raised'] = True
 
                     # Wrist lateral (radial/ulnar) deviation from front view.
-                    # If the wrist X deviates from the elbow-to-shoulder line by more than
-                    # WRIST_DEVIATION_RATIO of the forearm length, flag as bent from midline.
+                    # Projects the upper-arm direction past the elbow to get the expected
+                    # straight-wrist position, then measures the actual wrist offset from it.
                     try:
                         l_forearm = norm(l_wr_f - l_el_f)
                         if l_forearm > 1e-6:
-                            l_wr_dev = abs((l_wr_f[0] - l_el_f[0]) - (l_el_f[0] - l_sh_f[0]) *
-                                          (l_forearm / max(norm(l_el_f - l_sh_f), 1e-6)))
+                            l_upper_arm_dir = (l_el_f - l_sh_f) / max(norm(l_el_f - l_sh_f), 1e-6)
+                            l_expected_wrist = l_el_f + l_upper_arm_dir * l_forearm
+                            l_wr_dev = norm(l_wr_f - l_expected_wrist)
                             if l_wr_dev / l_forearm > WRIST_DEVIATION_RATIO:
                                 front_adjustments['is_left_wrist_bent_from_midline'] = True
                     except Exception as e:
@@ -737,8 +731,9 @@ while True:
                     try:
                         r_forearm = norm(r_wr_f - r_el_f)
                         if r_forearm > 1e-6:
-                            r_wr_dev = abs((r_wr_f[0] - r_el_f[0]) - (r_el_f[0] - r_sh_f[0]) *
-                                          (r_forearm / max(norm(r_el_f - r_sh_f), 1e-6)))
+                            r_upper_arm_dir = (r_el_f - r_sh_f) / max(norm(r_el_f - r_sh_f), 1e-6)
+                            r_expected_wrist = r_el_f + r_upper_arm_dir * r_forearm
+                            r_wr_dev = norm(r_wr_f - r_expected_wrist)
                             if r_wr_dev / r_forearm > WRIST_DEVIATION_RATIO:
                                 front_adjustments['is_right_wrist_bent_from_midline'] = True
                     except Exception as e:
@@ -763,14 +758,16 @@ while True:
                         if angle_neck_vert_deg > NECK_SIDE_BEND_THRESHOLD:
                             front_adjustments['is_neck_side_bent'] = True    # FIXED name
 
-                    # Neck twist (Z depth difference of ears)
+                    # Neck twist — Z-diff normalized by ear spread (distance-invariant)
                     neck_z_diff = abs(l_ear_lm_f.z - r_ear_lm_f.z)
-                    if neck_z_diff > NECK_TWIST_Z_THRESHOLD:
+                    ear_spread  = max(abs(l_ear_lm_f.x - r_ear_lm_f.x), 1e-6)
+                    if neck_z_diff / ear_spread > NECK_TWIST_Z_THRESHOLD:
                         front_adjustments['is_neck_twisted'] = True
 
-                    # Trunk twist (Z depth difference of shoulders)
+                    # Trunk twist — Z-diff normalized by shoulder spread (distance-invariant)
                     trunk_z_diff = abs(l_sh_lm_f.z - r_sh_lm_f.z)
-                    if trunk_z_diff > TRUNK_TWIST_Z_THRESHOLD:
+                    sh_spread    = max(abs(l_sh_lm_f.x - r_sh_lm_f.x), 1e-6)
+                    if trunk_z_diff / sh_spread > TRUNK_TWIST_Z_THRESHOLD:
                         front_adjustments['is_trunk_twisted'] = True
 
                     # Knee flexion (for REBA Leg score) ← NEW
@@ -800,16 +797,20 @@ while True:
                     except Exception as e:
                         print(f"Warn Knee Flex: {e}")
 
-                    # Unilateral stance detection (ankle X spread relative to hip width)
+                    # Unilateral stance detection (ankle X spread relative to hip width +
+                    # vertical Y difference to distinguish one-leg from feet-together)
                     try:
                         an_visible = (l_an_lm_f.visibility > 0.5 and r_an_lm_f.visibility > 0.5)
                         if an_visible:
                             l_an_f_x = l_an_lm_f.x * w_front
                             r_an_f_x = r_an_lm_f.x * w_front
-                            hip_width = abs(r_hip_f[0] - l_hip_f[0])
+                            hip_width   = abs(r_hip_f[0] - l_hip_f[0])
                             ankle_spread = abs(r_an_f_x - l_an_f_x)
-                            # If ankle spread < 30% of hip width, person is on one leg or feet together
-                            if hip_width > 1e-6 and (ankle_spread / hip_width) < 0.30:
+                            ankle_y_diff = abs(l_an_lm_f.y - r_an_lm_f.y)
+                            # Unilateral: feet close AND one ankle clearly higher (raised foot).
+                            # Feet-together bilateral stance has small spread but no Y difference.
+                            if (hip_width > 1e-6 and (ankle_spread / hip_width) < 0.30
+                                    and ankle_y_diff > 0.06):
                                 front_adjustments['is_unilateral_stance'] = True
                     except Exception as e:
                         print(f"Warn Stance: {e}")
@@ -1020,7 +1021,6 @@ while True:
         # Display — Front frame (adjustments + final score)
         # ================================================================
         ax = 10; ay = 28; alh = 18; afs = 0.4
-        def _b(v): return "T" if v else "F"
         lines_front = [
             f"LowArm cross: L={_b(front_adjustments['is_left_lower_arm_across_midline'])} R={_b(front_adjustments['is_right_lower_arm_across_midline'])}  abd: L={_b(front_adjustments['is_left_lower_arm_abducted'])} R={_b(front_adjustments['is_right_lower_arm_abducted'])}",
             f"Arm abd: L={_b(front_adjustments['is_left_arm_abducted'])}({angle_left_shoulder_deg:.0f}d) R={_b(front_adjustments['is_right_arm_abducted'])}({angle_right_shoulder_deg:.0f}d)  Sh.raised: L={_b(front_adjustments['is_left_shoulder_raised'])} R={_b(front_adjustments['is_right_shoulder_raised'])}",
@@ -1065,12 +1065,10 @@ while True:
                     video_writer = None
 
             if csv_writer is None:
-                is_new = not os.path.exists(CSV_OUT_PATH)
-                csv_fh = open(CSV_OUT_PATH, "a", newline="", encoding="utf-8")
+                csv_fh = open(CSV_OUT_PATH, "w", newline="", encoding="utf-8")
                 csv_fieldnames = list(row_data.keys())
                 csv_writer = csv.DictWriter(csv_fh, fieldnames=csv_fieldnames)
-                if is_new:
-                    csv_writer.writeheader(); csv_fh.flush()
+                csv_writer.writeheader(); csv_fh.flush()
 
             if video_writer is not None and video_writer.isOpened():
                 video_writer.write(combined1)
@@ -1155,5 +1153,4 @@ pose_right_side.close()
 pose_front.close()
 hands_left_side.close()
 hands_right_side.close()
-hands_front.close()
 print("JOB FINISH? JOB NOT FINISH!- Kobe")
