@@ -28,9 +28,9 @@ csv_writer   = None
 recording    = False
 
 # ==== Camera Indices ====
-LEFT_SIDE_CAMERA_INDEX  = 1  # Camera for LEFT side view
-RIGHT_SIDE_CAMERA_INDEX = 0   # Camera for RIGHT side view
-FRONT_CAMERA_INDEX      = 2   # Camera for Front view
+LEFT_SIDE_CAMERA_INDEX  = 0  # Camera for LEFT side view
+RIGHT_SIDE_CAMERA_INDEX = 2  # Camera for RIGHT side view
+FRONT_CAMERA_INDEX      = 1   # Camera for Front view
 
 # ==== REBA Thresholds ====
 # --- Group A: Trunk, Neck, Legs ---
