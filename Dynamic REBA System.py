@@ -31,8 +31,8 @@ csv_writer   = None
 recording    = False
 
 # ==== Camera Indices ====
-LEFT_SIDE_CAMERA_INDEX  = 0   # Camera for LEFT side view
-RIGHT_SIDE_CAMERA_INDEX = 2   # Camera for RIGHT side view
+LEFT_SIDE_CAMERA_INDEX  = 2  # Camera for LEFT side view
+RIGHT_SIDE_CAMERA_INDEX = 0   # Camera for RIGHT side view
 FRONT_CAMERA_INDEX      = 1   # Camera for Front view
 
 # ==== REBA Thresholds ====
@@ -507,7 +507,7 @@ while True:
                 l_ear_lm = landmarks_ls[POSE_LEFT_EAR]
 
                 required_lms = [l_sh_lm, l_el_lm, l_wr_lm, l_hip_lm, l_ear_lm]
-                if all(lm.visibility > 0.3 for lm in required_lms):
+                if all(lm.visibility > 0.6 for lm in required_lms):
                     left_results["valid"] = True
                     l_sh_pt  = (int(l_sh_lm.x * w_left),  int(l_sh_lm.y * h_left))
                     l_el_pt  = (int(l_el_lm.x * w_left),  int(l_el_lm.y * h_left))
@@ -572,7 +572,7 @@ while True:
                 r_ear_lm = landmarks_rs[POSE_RIGHT_EAR]
 
                 required_rms = [r_sh_lm, r_el_lm, r_wr_lm, r_hip_lm, r_ear_lm]
-                if all(lm.visibility > 0.3 for lm in required_rms):
+                if all(lm.visibility > 0.6 for lm in required_rms):
                     right_results["valid"] = True
                     r_sh_pt  = (int(r_sh_lm.x * w_right),  int(r_sh_lm.y * h_right))
                     r_el_pt  = (int(r_el_lm.x * w_right),  int(r_el_lm.y * h_right))
@@ -640,7 +640,7 @@ while True:
                                l_wr_lm_f, r_wr_lm_f, l_ear_lm_f, r_ear_lm_f,
                                l_el_lm_f, r_el_lm_f]
 
-                if all(lm.visibility > 0.3 for lm in required_f):
+                if all(lm.visibility > 0.6 for lm in required_f):
                     l_sh_f      = np.array([l_sh_lm_f.x * w_front,  l_sh_lm_f.y * h_front])
                     r_sh_f      = np.array([r_sh_lm_f.x * w_front,  r_sh_lm_f.y * h_front])
                     l_hip_f     = np.array([l_hip_lm_f.x * w_front, l_hip_lm_f.y * h_front])
