@@ -1,5 +1,6 @@
 # Claude Code internal instructions (local use only)
 CLAUDE.md
+*.doc
 
 # MediaPipe model files (auto-downloaded on first run)
 *.task
@@ -12,5 +13,6 @@ __pycache__/
 # Output files
 *.mp4
 *.csv
+*.mov
 
 
